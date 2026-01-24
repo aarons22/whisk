@@ -29,9 +29,11 @@ whisk setup
 
 The setup wizard will:
 - Guide you through credential entry
+- Automatically discover your Skylight frames
+- Let you choose the right frame if you have multiple
 - Discover your available lists
 - Help you configure list pairs
-- Set up conflict resolution preferences
+- Set up sync preferences
 
 ### 3. Start Syncing
 
@@ -175,13 +177,8 @@ whisk lists skylight
 ```
 
 ### Finding Your Skylight Frame ID
-```bash
-# Use the included discovery script
-python -c "
-from whisk.config import ConfigManager
-# TODO: Add frame discovery helper
-"
-```
+
+The setup wizard automatically discovers and displays your available frames - no manual lookup required! If you have multiple frames, you'll be able to choose the right one during setup.
 
 ## Development
 

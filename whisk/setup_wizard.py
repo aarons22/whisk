@@ -130,7 +130,7 @@ class SetupWizard:
                     raise Exception("Paprika authentication required")
 
     def _get_skylight_credentials(self) -> Dict[str, str]:
-        """Get and validate Skylight credentials"""
+        """Get and validate Skylight credentials with frame discovery"""
         while True:
             print()
             email = input("Skylight email: ").strip()
@@ -143,26 +143,56 @@ class SetupWizard:
                 print("❌ Password cannot be empty")
                 continue
 
-            frame_id = input("Skylight frame ID: ").strip()
-            if not frame_id:
-                print("❌ Frame ID cannot be empty")
-                print("💡 Tip: Find your frame ID at https://app.ourskylight.com/frames")
-                continue
+            print("🔐 Testing Skylight authentication and discovering frames...")
 
-            print("🔐 Testing Skylight authentication...")
-            if self._test_skylight_auth(email, password, frame_id):
-                print("✅ Skylight authentication successful")
-                return {
-                    'skylight_email': email,
-                    'skylight_password': password,
-                    'skylight_frame_id': frame_id
-                }
-            else:
+            # Test auth and discover frames
+            frames = self._test_skylight_auth_and_discover_frames(email, password)
+            if frames is None:
                 print("❌ Authentication failed. Please check your credentials and try again.")
-                print("💡 Make sure your frame ID is correct")
                 retry = input("Try again? (y/n): ").strip().lower()
                 if retry != 'y':
                     raise Exception("Skylight authentication required")
+                continue
+
+            if not frames:
+                print("❌ No frames found for this account. Please make sure you have a Skylight frame set up.")
+                retry = input("Try again? (y/n): ").strip().lower()
+                if retry != 'y':
+                    raise Exception("Skylight frame required")
+                continue
+
+            # Let user choose frame
+            if len(frames) == 1:
+                frame = frames[0]
+                frame_id = frame.get('id')
+                frame_name = frame.get('attributes', {}).get('name', 'Unnamed Frame')
+                print(f"✅ Found your Skylight frame: {frame_name}")
+            else:
+                print(f"✅ Found {len(frames)} Skylight frames:")
+                for i, frame in enumerate(frames, 1):
+                    frame_name = frame.get('attributes', {}).get('name', 'Unnamed Frame')
+                    frame_id = frame.get('id', 'Unknown ID')
+                    print(f"  {i}. {frame_name} (ID: {frame_id})")
+
+                while True:
+                    try:
+                        choice = int(input(f"Choose frame (1-{len(frames)}): ").strip())
+                        if 1 <= choice <= len(frames):
+                            frame = frames[choice - 1]
+                            frame_id = frame.get('id')
+                            frame_name = frame.get('attributes', {}).get('name', 'Unnamed Frame')
+                            print(f"Selected: {frame_name}")
+                            break
+                        else:
+                            print(f"❌ Please enter a number between 1 and {len(frames)}")
+                    except ValueError:
+                        print("❌ Please enter a valid number")
+
+            return {
+                'skylight_email': email,
+                'skylight_password': password,
+                'skylight_frame_id': frame_id
+            }
 
     def _test_paprika_auth(self, email: str, password: str) -> bool:
         """Test Paprika authentication"""
@@ -175,16 +205,25 @@ class SetupWizard:
             logger.debug(f"Paprika auth test failed: {e}")
             return False
 
-    def _test_skylight_auth(self, email: str, password: str, frame_id: str) -> bool:
-        """Test Skylight authentication"""
+    def _test_skylight_auth_and_discover_frames(self, email: str, password: str) -> Optional[List[Dict[str, Any]]]:
+        """Test Skylight authentication and discover available frames"""
         try:
-            token_cache_file = self.config_manager.config_dir / "skylight_token"
-            self.skylight_client = SkylightClient(email, password, frame_id, str(token_cache_file))
-            self.skylight_client.authenticate()
-            return True
+            # Create a temporary client with a dummy frame ID for authentication testing
+            token_cache_file = self.config_manager.config_dir / "skylight_token_temp"
+            temp_client = SkylightClient(email, password, "temp", str(token_cache_file))
+            temp_client.authenticate()
+
+            # Now get frames using the authenticated client
+            frames = temp_client.get_frames()
+
+            # Clean up temp token file
+            if token_cache_file.exists():
+                token_cache_file.unlink()
+
+            return frames
         except Exception as e:
-            logger.debug(f"Skylight auth test failed: {e}")
-            return False
+            logger.debug(f"Skylight auth and frame discovery failed: {e}")
+            return None
 
     def _discover_lists(self, paprika_creds: Dict[str, str], skylight_creds: Dict[str, str]) -> Tuple[List[str], List[str]]:
         """Discover available lists from both services"""
@@ -215,19 +254,23 @@ class SetupWizard:
 
         print("\n📋 Discovering Skylight lists...")
         try:
-            if not self.skylight_client:
-                token_cache_file = self.config_manager.config_dir / "skylight_token"
-                self.skylight_client = SkylightClient(
-                    skylight_creds['skylight_email'],
-                    skylight_creds['skylight_password'],
-                    skylight_creds['skylight_frame_id'],
-                    str(token_cache_file)
-                )
-                self.skylight_client.authenticate()
+            # Create client with the correct frame ID
+            token_cache_file = self.config_manager.config_dir / "skylight_token"
+            self.skylight_client = SkylightClient(
+                skylight_creds['skylight_email'],
+                skylight_creds['skylight_password'],
+                skylight_creds['skylight_frame_id'],
+                str(token_cache_file)
+            )
+            self.skylight_client.authenticate()
 
             skylight_lists = self.skylight_client.get_lists()
-            skylight_list_names = [lst['name'] for lst in skylight_lists]
-            print(f"✅ Found {len(skylight_list_names)} Skylight lists:")
+            # Filter to only shopping lists (not to-do lists)
+            shopping_lists = [lst for lst in skylight_lists
+                             if lst.get('attributes', {}).get('kind') == 'shopping']
+            skylight_list_names = [lst.get('attributes', {}).get('label', 'Unnamed List')
+                                  for lst in shopping_lists]
+            print(f"✅ Found {len(skylight_list_names)} Skylight shopping lists:")
             for i, name in enumerate(skylight_list_names, 1):
                 print(f"  {i}. {name}")
 
