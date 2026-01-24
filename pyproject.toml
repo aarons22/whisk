@@ -1,13 +1,14 @@
 [project]
-name = "paprika-skylight-sync"
-version = "0.1.0"
-description = "Bidirectional sync between Paprika and Skylight grocery lists"
+name = "whisk"
+version = "1.0.0"
+description = "Bidirectional sync for Paprika and Skylight grocery lists"
 requires-python = ">=3.10"
 dependencies = [
     "python-dotenv>=1.0.0",
     "apscheduler>=3.10.0",
     "pyyaml>=6.0",
     "requests>=2.31.0",
+    "psutil>=5.9.0",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +18,9 @@ dev = [
     "black>=23.0.0",
     "mypy>=1.5.0",
 ]
+
+[project.scripts]
+whisk = "whisk.cli:main"
 
 [build-system]
 requires = ["setuptools>=68.0"]

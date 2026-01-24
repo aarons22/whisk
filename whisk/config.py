@@ -25,12 +25,12 @@ class ListPairConfig:
 @dataclass
 class WhiskConfig:
     """Main Whisk configuration"""
+    # List pairs (required)
+    list_pairs: List[ListPairConfig]
+
     # Sync behavior
     sync_interval_seconds: int = 60
     global_conflict_strategy: str = "newest_wins"
-
-    # List pairs
-    list_pairs: List[ListPairConfig]
 
     # Credentials (loaded from .env)
     paprika_email: str = ""
