@@ -10,7 +10,7 @@ from typing import List, Optional, Dict, Any
 
 import requests
 
-from models import GroceryItem
+from .models import GroceryItem
 
 logger = logging.getLogger(__name__)
 
@@ -431,7 +431,7 @@ class SkylightClient:
             logger.error(f"Failed to get grocery list from Skylight: {e}")
             raise
 
-    def add_item(self, name: str, checked: bool = False, list_name: str) -> str:
+    def add_item(self, name: str, list_name: str, checked: bool = False) -> str:
         """
         Add item to grocery list (using discovered JSON:API structure)
 

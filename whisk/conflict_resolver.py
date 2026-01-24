@@ -6,9 +6,9 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
 
-from state_manager import StateManager, ItemLink
-from paprika_client import PaprikaClient
-from skylight_client import SkylightClient
+from .state_manager import StateManager, ItemLink
+from .paprika_client import PaprikaClient
+from .skylight_client import SkylightClient
 
 logger = logging.getLogger(__name__)
 

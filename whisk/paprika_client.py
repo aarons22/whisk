@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 
 import requests
 
-from models import GroceryItem
+from .models import GroceryItem
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +303,7 @@ class PaprikaClient:
             logger.error(f"Failed to get grocery list from Paprika: {e}")
             raise
 
-    def add_item(self, name: str, checked: bool = False, list_name: str) -> str:
+    def add_item(self, name: str, list_name: str, checked: bool = False) -> str:
         """
         Add item to grocery list (aisle auto-assigned by Paprika)
 
@@ -370,19 +370,16 @@ class PaprikaClient:
             logger.error(f"Failed to add item to Paprika: {e}")
             raise
 
-    def update_item(self, paprika_id: str, checked: bool, name: Optional[str] = None, list_name: str = None) -> None:
+    def update_item(self, paprika_id: str, checked: bool, list_name: str, name: Optional[str] = None) -> None:
         """
         Update item (checked status or name)
 
         Args:
             paprika_id: Paprika UID of the item
             checked: New checked status
-            name: Optional new name for the item
             list_name: Name of the grocery list containing the item
+            name: Optional new name for the item
         """
-        if list_name is None:
-            raise ValueError("list_name parameter is required")
-
         try:
             logger.debug(f"Updating item in Paprika: {paprika_id} (checked={checked})")
 

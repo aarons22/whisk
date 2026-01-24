@@ -27,14 +27,10 @@ def setup_logging(level: str = "INFO") -> None:
 
 def cmd_setup(args) -> int:
     """Interactive setup wizard"""
-    print("🚀 Whisk Setup Wizard")
-    print("Setting up bidirectional sync for Paprika ↔ Skylight grocery lists")
-    print()
+    from .setup_wizard import SetupWizard
 
-    # TODO: Implement interactive setup wizard (Task #2)
-    print("❌ Setup wizard not yet implemented")
-    print("Run 'whisk --help' for available commands")
-    return 1
+    setup_wizard = SetupWizard(args.config_dir)
+    return setup_wizard.run(migrate=args.migrate)
 
 
 def cmd_sync(args) -> int:

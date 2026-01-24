@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple, NamedTuple
 from dataclasses import dataclass
 
-from models import GroceryItem
+from .models import GroceryItem
 
 logger = logging.getLogger(__name__)
 

@@ -10,12 +10,12 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
-from models import GroceryItem
-from paprika_client import PaprikaClient
-from skylight_client import SkylightClient
-from state_manager import StateManager
-from item_linker import ItemLinker
-from conflict_resolver import ConflictResolver, create_conflict_resolver_config
+from .models import GroceryItem
+from .paprika_client import PaprikaClient
+from .skylight_client import SkylightClient
+from .state_manager import StateManager
+from .item_linker import ItemLinker
+from .conflict_resolver import ConflictResolver, create_conflict_resolver_config
 
 logger = logging.getLogger(__name__)
 

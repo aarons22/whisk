@@ -5,7 +5,7 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
-from state_manager import StateManager, PaprikaItem, SkylightItem
+from .state_manager import StateManager, PaprikaItem, SkylightItem
 
 logger = logging.getLogger(__name__)
 
