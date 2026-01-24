@@ -35,12 +35,12 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 
 from paprika_client import PaprikaClient
 from skylight_client import SkylightClient
-from state_manager_v2 import StateManagerV2
-from sync_engine_v2 import SyncEngineV2
+from state_manager import StateManager
+from sync_engine import SyncEngine
 
 # Global scheduler for signal handling
 scheduler: Optional[BlockingScheduler] = None
-sync_engine: Optional[SyncEngineV2] = None
+sync_engine: Optional[SyncEngine] = None
 logger = logging.getLogger(__name__)
 
 
@@ -155,7 +155,7 @@ def setup_logging(config: Dict[str, Any]) -> None:
         logger.info("Continuing with console logging only")
 
 
-def initialize_clients(config: Dict[str, Any]) -> tuple[PaprikaClient, SkylightClient, StateManagerV2]:
+def initialize_clients(config: Dict[str, Any]) -> tuple[PaprikaClient, SkylightClient, StateManager]:
     """
     Initialize API clients and state manager
 
@@ -194,8 +194,8 @@ def initialize_clients(config: Dict[str, Any]) -> tuple[PaprikaClient, SkylightC
 
         # Initialize state manager (Phase 6 architecture)
         db_path = project_root / config.get('database', {}).get('path', 'sync_state_v2.db')
-        state_manager = StateManagerV2(str(db_path))
-        logger.info(f"✅ StateManagerV2 initialized with database: {db_path}")
+        state_manager = StateManager(str(db_path))
+        logger.info(f"✅ StateManager initialized with database: {db_path}")
 
         return paprika_client, skylight_client, state_manager
 
@@ -208,19 +208,19 @@ def create_sync_engine(
     config: Dict[str, Any],
     paprika_client: PaprikaClient,
     skylight_client: SkylightClient,
-    state_manager: StateManagerV2
-) -> SyncEngineV2:
+    state_manager: StateManager
+) -> SyncEngine:
     """
-    Create and configure SyncEngineV2 with Phase 6 architecture
+    Create and configure SyncEngine with Phase 6 architecture
 
     Args:
         config: Configuration dictionary
         paprika_client: Authenticated Paprika client
         skylight_client: Authenticated Skylight client
-        state_manager: Initialized StateManagerV2
+        state_manager: Initialized StateManager
 
     Returns:
-        Configured SyncEngineV2 instance
+        Configured SyncEngine instance
     """
     paprika_list_name = config.get('paprika', {}).get('list_name', 'Test List')
     skylight_list_name = config.get('skylight', {}).get('list_name', 'Test List')
@@ -241,7 +241,7 @@ def create_sync_engine(
             'timestamp_tolerance': config.get('sync', {}).get('timestamp_tolerance_seconds', 60)
         }
 
-        sync_engine = SyncEngineV2(
+        sync_engine = SyncEngine(
             paprika_client=paprika_client,
             skylight_client=skylight_client,
             state_manager=state_manager,
@@ -250,7 +250,7 @@ def create_sync_engine(
             config=sync_config
         )
 
-        logger.info("✅ SyncEngineV2 created successfully with Phase 6 architecture")
+        logger.info("✅ SyncEngine created successfully with Phase 6 architecture")
         return sync_engine
 
     except Exception as e:

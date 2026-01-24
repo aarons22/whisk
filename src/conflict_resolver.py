@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from enum import Enum
 
-from state_manager_v2 import StateManagerV2, ItemLink
+from state_manager import StateManager, ItemLink
 from paprika_client import PaprikaClient
 from skylight_client import SkylightClient
 
@@ -41,7 +41,7 @@ class ConflictResolver:
     Handles conflicts between Paprika and Skylight items using configurable strategies
     """
 
-    def __init__(self, state_manager: StateManagerV2,
+    def __init__(self, state_manager: StateManager,
                  paprika_client: PaprikaClient,
                  skylight_client: SkylightClient,
                  config: dict = None):
@@ -49,7 +49,7 @@ class ConflictResolver:
         Initialize ConflictResolver
 
         Args:
-            state_manager: StateManagerV2 instance
+            state_manager: StateManager instance
             paprika_client: PaprikaClient for applying changes
             skylight_client: SkylightClient for applying changes
             config: Configuration options
@@ -312,7 +312,7 @@ class ConflictResolver:
             paprika_changed = (last_paprika_checked != current_paprika_checked)
             skylight_changed = (last_skylight_checked != current_skylight_checked)
 
-            logger.info(f"Change detection for '{p_item.name}': "
+            logger.debug(f"Change detection for '{p_item.name}': "
                        f"Paprika {last_paprika_checked}→{current_paprika_checked} (changed={paprika_changed}), "
                        f"Skylight {last_skylight_checked}→{current_skylight_checked} (changed={skylight_changed})")
 
@@ -322,7 +322,7 @@ class ConflictResolver:
                 return ("paprika", 0.95)   # High confidence - only Paprika changed
             elif paprika_changed and skylight_changed:
                 # Both changed - can't determine source, fall back to timestamps
-                logger.info(f"Both systems changed for '{p_item.name}', falling back to timestamps")
+                logger.debug(f"Both systems changed for '{p_item.name}', falling back to timestamps")
                 return None
             else:
                 # Neither changed according to our records - this shouldn't happen in a conflict

@@ -5,7 +5,7 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
-from state_manager_v2 import StateManagerV2, PaprikaItem, SkylightItem
+from state_manager import StateManager, PaprikaItem, SkylightItem
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +25,12 @@ class ItemLinker:
     and fuzzy matching scenarios
     """
 
-    def __init__(self, state_manager: StateManagerV2, config: dict = None):
+    def __init__(self, state_manager: StateManager, config: dict = None):
         """
         Initialize ItemLinker
 
         Args:
-            state_manager: StateManagerV2 instance
+            state_manager: StateManager instance
             config: Configuration options for matching behavior
         """
         self.state = state_manager

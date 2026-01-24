@@ -1,18 +1,83 @@
-"""State management for grocery list sync using SQLite"""
+"""State management for grocery list sync using SQLite - Version 2 Architecture
+
+This version implements the redesigned 3-table schema to handle:
+- Duplicate item names properly
+- Synthetic timestamp management for Paprika items
+- Foreign key relationships between systems
+- Comprehensive audit logging
+"""
 
 import logging
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, NamedTuple
+from dataclasses import dataclass
 
 from models import GroceryItem
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class PaprikaItem:
+    """Paprika item with synthetic timestamp management"""
+    id: Optional[int]
+    paprika_id: str
+    list_uid: str
+    name: str
+    checked: bool
+    aisle: Optional[str] = None
+    ingredient: Optional[str] = None
+    # Synthetic timestamp management
+    created_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
+    last_modified_at: Optional[datetime] = None
+    # Sync state
+    is_deleted: bool = False
+    last_synced_at: Optional[datetime] = None
+
+
+@dataclass
+class SkylightItem:
+    """Skylight item with real API timestamps"""
+    id: Optional[int]
+    skylight_id: str
+    list_id: str
+    name: str
+    checked: bool
+    # Real timestamps from API
+    skylight_created_at: Optional[datetime] = None
+    skylight_updated_at: Optional[datetime] = None
+    # Sync state
+    last_synced_at: Optional[datetime] = None
+
+
+@dataclass
+class ItemLink:
+    """Link between Paprika and Skylight items"""
+    id: Optional[int]
+    paprika_item_id: int
+    skylight_item_id: int
+    linked_at: datetime
+    confidence_score: float = 1.0
+    paprika_item: Optional[PaprikaItem] = None
+    skylight_item: Optional[SkylightItem] = None
+
+
+@dataclass
+class SyncLogEntry:
+    """Audit log entry for sync operations"""
+    id: Optional[int]
+    operation: str  # 'CREATE', 'UPDATE', 'DELETE', 'CONFLICT', 'LINK'
+    paprika_item_id: Optional[int]
+    skylight_item_id: Optional[int]
+    details: str  # JSON string
+    created_at: datetime
+
+
 class StateManager:
-    """Manages sync state tracking using SQLite database"""
+    """Manages sync state using 3-table architecture with proper relationships"""
 
     def __init__(self, db_path: str = "sync_state.db"):
         """
@@ -26,62 +91,121 @@ class StateManager:
         self._initialize_database()
 
     def _initialize_database(self) -> None:
-        """Initialize SQLite database with schema"""
+        """Initialize SQLite database with new 3-table schema"""
         try:
-            logger.info(f"Initializing database at {self.db_path}")
+            logger.info(f"Initializing StateManager database at {self.db_path}")
 
             self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            self.conn.row_factory = sqlite3.Row  # Enable dict-like access to rows
+            self.conn.row_factory = sqlite3.Row  # Enable dict-like access
+            self.conn.execute("PRAGMA foreign_keys = ON")  # Enable foreign key constraints
 
-            # Create schema
-            schema_sql = """
-            CREATE TABLE IF NOT EXISTS items (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_name TEXT NOT NULL,
-                paprika_id TEXT,
-                paprika_list_uid TEXT,
-                skylight_id TEXT,
-                skylight_list_id TEXT,
-                checked INTEGER DEFAULT 0,  -- 0=unchecked, 1=checked
-                deleted INTEGER DEFAULT 0,  -- 0=active, 1=deleted
-                paprika_timestamp TEXT,     -- ISO 8601 format
-                skylight_timestamp TEXT,    -- ISO 8601 format
-                last_synced_at TEXT,        -- ISO 8601 format
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(item_name, paprika_list_uid, skylight_list_id)
-            );
+            # Create tables
+            self._create_paprika_items_table()
+            self._create_skylight_items_table()
+            self._create_item_links_table()
+            self._create_sync_log_table()
 
-            CREATE INDEX IF NOT EXISTS idx_item_name ON items(item_name);
-            CREATE INDEX IF NOT EXISTS idx_paprika_id ON items(paprika_id);
-            CREATE INDEX IF NOT EXISTS idx_skylight_id ON items(skylight_id);
-            CREATE INDEX IF NOT EXISTS idx_deleted ON items(deleted);
-            CREATE INDEX IF NOT EXISTS idx_last_synced ON items(last_synced_at);
-
-            -- Trigger to update updated_at timestamp
-            CREATE TRIGGER IF NOT EXISTS update_items_timestamp
-                AFTER UPDATE ON items
-                FOR EACH ROW
-            BEGIN
-                UPDATE items SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-            END;
-            """
-
-            self.conn.executescript(schema_sql)
             self.conn.commit()
-
-            logger.info("Database initialized successfully")
+            logger.info("StateManager database initialized successfully")
 
         except Exception as e:
-            logger.error(f"Failed to initialize database: {e}")
+            logger.error(f"Failed to initialize StateManager database: {e}")
             raise
+
+    def _create_paprika_items_table(self) -> None:
+        """Create Paprika items table with synthetic timestamp management"""
+        schema_sql = """
+        CREATE TABLE IF NOT EXISTS paprika_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paprika_id TEXT NOT NULL UNIQUE,
+            list_uid TEXT NOT NULL,
+            name TEXT NOT NULL,
+            checked INTEGER DEFAULT 0,  -- purchased field from API
+            aisle TEXT,
+            ingredient TEXT,
+            -- Synthetic timestamp management
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_modified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            -- Sync state
+            is_deleted INTEGER DEFAULT 0,
+            last_synced_at DATETIME
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_paprika_id ON paprika_items(paprika_id);
+        CREATE INDEX IF NOT EXISTS idx_paprika_list_uid ON paprika_items(list_uid);
+        CREATE INDEX IF NOT EXISTS idx_paprika_name ON paprika_items(name);
+        CREATE INDEX IF NOT EXISTS idx_paprika_deleted ON paprika_items(is_deleted);
+        CREATE INDEX IF NOT EXISTS idx_paprika_last_modified ON paprika_items(last_modified_at);
+        """
+        self.conn.executescript(schema_sql)
+
+    def _create_skylight_items_table(self) -> None:
+        """Create Skylight items table with real API timestamps"""
+        schema_sql = """
+        CREATE TABLE IF NOT EXISTS skylight_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            skylight_id TEXT NOT NULL UNIQUE,
+            list_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            checked INTEGER DEFAULT 0,
+            -- Real timestamps from API
+            skylight_created_at DATETIME,
+            skylight_updated_at DATETIME,
+            -- Sync state
+            last_synced_at DATETIME
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skylight_id ON skylight_items(skylight_id);
+        CREATE INDEX IF NOT EXISTS idx_skylight_list_id ON skylight_items(list_id);
+        CREATE INDEX IF NOT EXISTS idx_skylight_name ON skylight_items(name);
+        CREATE INDEX IF NOT EXISTS idx_skylight_updated ON skylight_items(skylight_updated_at);
+        """
+        self.conn.executescript(schema_sql)
+
+    def _create_item_links_table(self) -> None:
+        """Create foreign key relationships between items"""
+        schema_sql = """
+        CREATE TABLE IF NOT EXISTS item_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paprika_item_id INTEGER NOT NULL REFERENCES paprika_items(id) ON DELETE CASCADE,
+            skylight_item_id INTEGER NOT NULL REFERENCES skylight_items(id) ON DELETE CASCADE,
+            linked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            confidence_score REAL DEFAULT 1.0,  -- For fuzzy name matching
+            UNIQUE(paprika_item_id, skylight_item_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_links_paprika ON item_links(paprika_item_id);
+        CREATE INDEX IF NOT EXISTS idx_links_skylight ON item_links(skylight_item_id);
+        CREATE INDEX IF NOT EXISTS idx_links_confidence ON item_links(confidence_score);
+        """
+        self.conn.executescript(schema_sql)
+
+    def _create_sync_log_table(self) -> None:
+        """Create sync operations log for debugging"""
+        schema_sql = """
+        CREATE TABLE IF NOT EXISTS sync_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            operation TEXT NOT NULL,  -- 'CREATE', 'UPDATE', 'DELETE', 'CONFLICT', 'LINK'
+            paprika_item_id INTEGER REFERENCES paprika_items(id),
+            skylight_item_id INTEGER REFERENCES skylight_items(id),
+            details TEXT,  -- JSON with before/after states
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sync_log_operation ON sync_log(operation);
+        CREATE INDEX IF NOT EXISTS idx_sync_log_created ON sync_log(created_at);
+        CREATE INDEX IF NOT EXISTS idx_sync_log_paprika ON sync_log(paprika_item_id);
+        CREATE INDEX IF NOT EXISTS idx_sync_log_skylight ON sync_log(skylight_item_id);
+        """
+        self.conn.executescript(schema_sql)
 
     def close(self) -> None:
         """Close database connection"""
         if self.conn:
             self.conn.close()
             self.conn = None
-            logger.debug("Database connection closed")
+            logger.info("StateManager database connection closed")
 
     def __enter__(self):
         return self
@@ -89,434 +213,459 @@ class StateManager:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
-    def _datetime_to_iso(self, dt: Optional[datetime]) -> Optional[str]:
-        """Convert datetime to ISO 8601 string"""
-        if dt is None:
-            return None
-        return dt.isoformat()
-
-    def _iso_to_datetime(self, iso_str: Optional[str]) -> Optional[datetime]:
-        """Convert ISO 8601 string to datetime"""
-        if not iso_str:
-            return None
-        try:
-            return datetime.fromisoformat(iso_str)
-        except Exception as e:
-            logger.warning(f"Failed to parse datetime '{iso_str}': {e}")
-            return None
-
-    def add_or_update_item(
-        self,
-        item: GroceryItem,
-        paprika_list_uid: Optional[str] = None,
-        skylight_list_id: Optional[str] = None
-    ) -> int:
+    # Paprika Items Operations
+    def upsert_paprika_item(self, item: GroceryItem, list_uid: str) -> PaprikaItem:
         """
-        Add or update item in state tracking
+        Insert or update Paprika item with synthetic timestamp management
 
         Args:
-            item: GroceryItem to track
-            paprika_list_uid: Paprika list UID (if item exists in Paprika)
-            skylight_list_id: Skylight list ID (if item exists in Skylight)
+            item: GroceryItem from Paprika API
+            list_uid: Paprika list UID
 
         Returns:
-            Database row ID of the item
+            PaprikaItem with synthetic timestamps
+        """
+        try:
+            cursor = self.conn.cursor()
+            now = datetime.now(timezone.utc)
+
+            # Check if item already exists
+            cursor.execute("""
+                SELECT * FROM paprika_items WHERE paprika_id = ?
+            """, (item.paprika_id,))
+            existing = cursor.fetchone()
+
+            if existing:
+                # Update existing item - check if changed
+                changed = (
+                    existing['checked'] != item.checked or
+                    existing['name'] != item.name
+                )
+
+                last_modified_at = now if changed else existing['last_modified_at']
+
+                cursor.execute("""
+                    UPDATE paprika_items
+                    SET name = ?, checked = ?, aisle = ?, ingredient = ?,
+                        last_seen_at = ?, last_modified_at = ?, is_deleted = 0
+                    WHERE paprika_id = ?
+                """, (
+                    item.name, item.checked, getattr(item, 'aisle', None),
+                    item.name.lower(), now, last_modified_at, item.paprika_id
+                ))
+
+                paprika_item = PaprikaItem(
+                    id=existing['id'],
+                    paprika_id=item.paprika_id,
+                    list_uid=list_uid,
+                    name=item.name,
+                    checked=item.checked,
+                    aisle=getattr(item, 'aisle', None),
+                    ingredient=item.name.lower(),
+                    created_at=self._parse_datetime(existing['created_at']),
+                    last_seen_at=now,
+                    last_modified_at=last_modified_at,
+                    is_deleted=False,
+                    last_synced_at=self._parse_datetime(existing['last_synced_at'])
+                )
+
+                if changed:
+                    self.log_sync_operation('UPDATE', paprika_item_id=existing['id'],
+                                          details=f"Updated Paprika item: {item.name}")
+
+            else:
+                # Insert new item
+                cursor.execute("""
+                    INSERT INTO paprika_items
+                    (paprika_id, list_uid, name, checked, aisle, ingredient,
+                     created_at, last_seen_at, last_modified_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    item.paprika_id, list_uid, item.name, item.checked,
+                    getattr(item, 'aisle', None), item.name.lower(),
+                    now, now, now
+                ))
+
+                paprika_item = PaprikaItem(
+                    id=cursor.lastrowid,
+                    paprika_id=item.paprika_id,
+                    list_uid=list_uid,
+                    name=item.name,
+                    checked=item.checked,
+                    aisle=getattr(item, 'aisle', None),
+                    ingredient=item.name.lower(),
+                    created_at=now,
+                    last_seen_at=now,
+                    last_modified_at=now,
+                    is_deleted=False,
+                    last_synced_at=None
+                )
+
+                self.log_sync_operation('CREATE', paprika_item_id=paprika_item.id,
+                                      details=f"Created Paprika item: {item.name}")
+
+            self.conn.commit()
+            return paprika_item
+
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"Failed to upsert Paprika item: {e}")
+            raise
+
+    def upsert_skylight_item(self, item: GroceryItem, list_id: str) -> SkylightItem:
+        """
+        Insert or update Skylight item with real API timestamps
+
+        Args:
+            item: GroceryItem from Skylight API
+            list_id: Skylight list ID
+
+        Returns:
+            SkylightItem with real timestamps
         """
         try:
             cursor = self.conn.cursor()
 
-            # Check if item already exists (by name and list combination)
+            # Check if item already exists
             cursor.execute("""
-                SELECT id FROM items
-                WHERE item_name = ?
-                AND (paprika_list_uid = ? OR paprika_list_uid IS NULL)
-                AND (skylight_list_id = ? OR skylight_list_id IS NULL)
-                AND deleted = 0
-            """, (item.name, paprika_list_uid, skylight_list_id))
-
+                SELECT * FROM skylight_items WHERE skylight_id = ?
+            """, (item.skylight_id,))
             existing = cursor.fetchone()
 
             if existing:
                 # Update existing item
                 cursor.execute("""
-                    UPDATE items SET
-                        paprika_id = COALESCE(?, paprika_id),
-                        paprika_list_uid = COALESCE(?, paprika_list_uid),
-                        skylight_id = COALESCE(?, skylight_id),
-                        skylight_list_id = COALESCE(?, skylight_list_id),
-                        checked = ?,
-                        paprika_timestamp = ?,
-                        skylight_timestamp = ?
-                    WHERE id = ?
+                    UPDATE skylight_items
+                    SET name = ?, checked = ?, skylight_created_at = ?,
+                        skylight_updated_at = ?
+                    WHERE skylight_id = ?
                 """, (
-                    item.paprika_id,
-                    paprika_list_uid,
-                    item.skylight_id,
-                    skylight_list_id,
-                    1 if item.checked else 0,
-                    self._datetime_to_iso(item.paprika_timestamp),
-                    self._datetime_to_iso(item.skylight_timestamp),
-                    existing['id']
+                    item.name, item.checked, item.skylight_timestamp,
+                    item.skylight_timestamp, item.skylight_id
                 ))
 
-                self.conn.commit()
-                logger.debug(f"Updated item: {item.name}")
-                return existing['id']
+                skylight_item = SkylightItem(
+                    id=existing['id'],
+                    skylight_id=item.skylight_id,
+                    list_id=list_id,
+                    name=item.name,
+                    checked=item.checked,
+                    skylight_created_at=item.skylight_timestamp,
+                    skylight_updated_at=item.skylight_timestamp,
+                    last_synced_at=self._parse_datetime(existing['last_synced_at'])
+                )
+
+                self.log_sync_operation('UPDATE', skylight_item_id=existing['id'],
+                                      details=f"Updated Skylight item: {item.name}")
 
             else:
                 # Insert new item
                 cursor.execute("""
-                    INSERT INTO items (
-                        item_name, paprika_id, paprika_list_uid, skylight_id, skylight_list_id,
-                        checked, paprika_timestamp, skylight_timestamp
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO skylight_items
+                    (skylight_id, list_id, name, checked, skylight_created_at, skylight_updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 """, (
-                    item.name,
-                    item.paprika_id,
-                    paprika_list_uid,
-                    item.skylight_id,
-                    skylight_list_id,
-                    1 if item.checked else 0,
-                    self._datetime_to_iso(item.paprika_timestamp),
-                    self._datetime_to_iso(item.skylight_timestamp)
+                    item.skylight_id, list_id, item.name, item.checked,
+                    item.skylight_timestamp, item.skylight_timestamp
                 ))
 
-                self.conn.commit()
-                item_id = cursor.lastrowid
-                logger.debug(f"Added new item: {item.name} (id={item_id})")
-                return item_id
+                skylight_item = SkylightItem(
+                    id=cursor.lastrowid,
+                    skylight_id=item.skylight_id,
+                    list_id=list_id,
+                    name=item.name,
+                    checked=item.checked,
+                    skylight_created_at=item.skylight_timestamp,
+                    skylight_updated_at=item.skylight_timestamp,
+                    last_synced_at=None
+                )
+
+                self.log_sync_operation('CREATE', skylight_item_id=skylight_item.id,
+                                      details=f"Created Skylight item: {item.name}")
+
+            self.conn.commit()
+            return skylight_item
 
         except Exception as e:
-            logger.error(f"Failed to add/update item {item.name}: {e}")
+            self.conn.rollback()
+            logger.error(f"Failed to upsert Skylight item: {e}")
             raise
 
-    def get_item_by_ids(
-        self,
-        paprika_id: Optional[str] = None,
-        skylight_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    def mark_unseen_paprika_items_as_deleted(self, cutoff_time: datetime = None) -> int:
         """
-        Get item by Paprika or Skylight ID
+        Mark Paprika items not seen recently as potentially deleted
 
         Args:
-            paprika_id: Paprika UID to search for
-            skylight_id: Skylight ID to search for
+            cutoff_time: Items not seen after this time are marked deleted
+                        (default: 1 minute ago)
+        Returns:
+            Number of items marked as deleted
+        """
+        if cutoff_time is None:
+            cutoff_time = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(minutes=1)
+
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                UPDATE paprika_items
+                SET is_deleted = 1
+                WHERE last_seen_at < ? AND is_deleted = 0
+            """, (cutoff_time,))
+
+            deleted_count = cursor.rowcount
+            self.conn.commit()
+
+            if deleted_count > 0:
+                logger.info(f"Marked {deleted_count} Paprika items as deleted (not seen since {cutoff_time})")
+
+            return deleted_count
+
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"Failed to mark unseen Paprika items: {e}")
+            raise
+
+    def get_unlinked_paprika_items(self) -> List[PaprikaItem]:
+        """Get Paprika items that are not linked to any Skylight items"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT p.* FROM paprika_items p
+                LEFT JOIN item_links l ON p.id = l.paprika_item_id
+                WHERE l.paprika_item_id IS NULL AND p.is_deleted = 0
+            """)
+
+            items = []
+            for row in cursor.fetchall():
+                items.append(self._row_to_paprika_item(row))
+
+            return items
+
+        except Exception as e:
+            logger.error(f"Failed to get unlinked Paprika items: {e}")
+            raise
+
+    def get_unlinked_skylight_items(self) -> List[SkylightItem]:
+        """Get Skylight items that are not linked to any Paprika items"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT s.* FROM skylight_items s
+                LEFT JOIN item_links l ON s.id = l.skylight_item_id
+                WHERE l.skylight_item_id IS NULL
+            """)
+
+            items = []
+            for row in cursor.fetchall():
+                items.append(self._row_to_skylight_item(row))
+
+            return items
+
+        except Exception as e:
+            logger.error(f"Failed to get unlinked Skylight items: {e}")
+            raise
+
+    def create_item_link(self, paprika_item_id: int, skylight_item_id: int,
+                        confidence_score: float = 1.0) -> ItemLink:
+        """
+        Create a link between Paprika and Skylight items
+
+        Args:
+            paprika_item_id: ID of Paprika item
+            skylight_item_id: ID of Skylight item
+            confidence_score: Confidence in the match (0.0-1.0)
 
         Returns:
-            Dictionary with item data or None if not found
+            Created ItemLink
         """
-        if not paprika_id and not skylight_id:
+        try:
+            cursor = self.conn.cursor()
+            now = datetime.now(timezone.utc)
+
+            cursor.execute("""
+                INSERT INTO item_links (paprika_item_id, skylight_item_id, linked_at, confidence_score)
+                VALUES (?, ?, ?, ?)
+            """, (paprika_item_id, skylight_item_id, now, confidence_score))
+
+            link = ItemLink(
+                id=cursor.lastrowid,
+                paprika_item_id=paprika_item_id,
+                skylight_item_id=skylight_item_id,
+                linked_at=now,
+                confidence_score=confidence_score
+            )
+
+            self.conn.commit()
+
+            self.log_sync_operation('LINK', paprika_item_id=paprika_item_id,
+                                  skylight_item_id=skylight_item_id,
+                                  details=f"Linked items with confidence {confidence_score}")
+
+            return link
+
+        except Exception as e:
+            self.conn.rollback()
+            logger.error(f"Failed to create item link: {e}")
+            raise
+
+    def get_linked_items_with_conflicts(self) -> List[ItemLink]:
+        """Get linked items where Paprika and Skylight have different checked states"""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT l.*,
+                       p.name as p_name, p.checked as p_checked, p.last_modified_at as p_modified,
+                       p.paprika_id as p_paprika_id, p.list_uid as p_list_uid,
+                       s.name as s_name, s.checked as s_checked, s.skylight_updated_at as s_updated,
+                       s.skylight_id as s_skylight_id, s.list_id as s_list_id
+                FROM item_links l
+                JOIN paprika_items p ON l.paprika_item_id = p.id
+                JOIN skylight_items s ON l.skylight_item_id = s.id
+                WHERE p.checked != s.checked AND p.is_deleted = 0
+            """)
+
+            links = []
+            for row in cursor.fetchall():
+                link = ItemLink(
+                    id=row['id'],
+                    paprika_item_id=row['paprika_item_id'],
+                    skylight_item_id=row['skylight_item_id'],
+                    linked_at=self._parse_datetime(row['linked_at']),
+                    confidence_score=row['confidence_score']
+                )
+
+                # Attach item details for conflict resolution
+                link.paprika_item = PaprikaItem(
+                    id=row['paprika_item_id'],
+                    paprika_id=row['p_paprika_id'],  # Use actual paprika_id from DB
+                    list_uid=row['p_list_uid'],      # Use actual list_uid from DB
+                    name=row['p_name'],
+                    checked=bool(row['p_checked']),
+                    last_modified_at=self._parse_datetime(row['p_modified'])
+                )
+
+                link.skylight_item = SkylightItem(
+                    id=row['skylight_item_id'],
+                    skylight_id=row['s_skylight_id'], # Use actual skylight_id from DB
+                    list_id=row['s_list_id'],         # Use actual list_id from DB
+                    name=row['s_name'],
+                    checked=bool(row['s_checked']),
+                    skylight_updated_at=self._parse_datetime(row['s_updated'])
+                )
+
+                links.append(link)
+
+            return links
+
+        except Exception as e:
+            logger.error(f"Failed to get linked items with conflicts: {e}")
+            raise
+
+    def log_sync_operation(self, operation: str, paprika_item_id: int = None,
+                          skylight_item_id: int = None, details: str = "") -> None:
+        """
+        Log a sync operation for debugging and audit trail
+
+        Args:
+            operation: Type of operation ('CREATE', 'UPDATE', 'DELETE', 'CONFLICT', 'LINK')
+            paprika_item_id: Optional Paprika item ID
+            skylight_item_id: Optional Skylight item ID
+            details: Additional details about the operation
+        """
+        try:
+            cursor = self.conn.cursor()
+            now = datetime.now(timezone.utc)
+
+            cursor.execute("""
+                INSERT INTO sync_log (operation, paprika_item_id, skylight_item_id, details, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (operation, paprika_item_id, skylight_item_id, details, now))
+
+            self.conn.commit()
+            logger.debug(f"Logged sync operation: {operation} - {details}")
+
+        except Exception as e:
+            logger.error(f"Failed to log sync operation: {e}")
+            # Don't raise - logging failures shouldn't break sync
+
+    # Utility methods
+    def _parse_datetime(self, dt_str) -> Optional[datetime]:
+        """Parse datetime string to datetime object"""
+        if not dt_str:
+            return None
+        try:
+            return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+        except:
             return None
 
-        try:
-            cursor = self.conn.cursor()
+    def _row_to_paprika_item(self, row) -> PaprikaItem:
+        """Convert database row to PaprikaItem"""
+        return PaprikaItem(
+            id=row['id'],
+            paprika_id=row['paprika_id'],
+            list_uid=row['list_uid'],
+            name=row['name'],
+            checked=bool(row['checked']),
+            aisle=row['aisle'],
+            ingredient=row['ingredient'],
+            created_at=self._parse_datetime(row['created_at']),
+            last_seen_at=self._parse_datetime(row['last_seen_at']),
+            last_modified_at=self._parse_datetime(row['last_modified_at']),
+            is_deleted=bool(row['is_deleted']),
+            last_synced_at=self._parse_datetime(row['last_synced_at'])
+        )
 
-            if paprika_id:
-                cursor.execute("SELECT * FROM items WHERE paprika_id = ? AND deleted = 0", (paprika_id,))
-            else:
-                cursor.execute("SELECT * FROM items WHERE skylight_id = ? AND deleted = 0", (skylight_id,))
-
-            row = cursor.fetchone()
-            return dict(row) if row else None
-
-        except Exception as e:
-            logger.error(f"Failed to get item by IDs: {e}")
-            raise
-
-    def mark_item_deleted(self, item_id: int) -> None:
-        """
-        Mark item as deleted in state tracking
-
-        Args:
-            item_id: Database row ID of item to mark as deleted
-        """
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("UPDATE items SET deleted = 1 WHERE id = ?", (item_id,))
-            self.conn.commit()
-            logger.debug(f"Marked item {item_id} as deleted")
-
-        except Exception as e:
-            logger.error(f"Failed to mark item {item_id} as deleted: {e}")
-            raise
-
-    def get_all_active_items(self) -> List[Dict[str, Any]]:
-        """
-        Get all active (non-deleted) items from state tracking
-
-        Returns:
-            List of dictionaries with item data
-        """
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT * FROM items WHERE deleted = 0 ORDER BY item_name")
-            return [dict(row) for row in cursor.fetchall()]
-
-        except Exception as e:
-            logger.error(f"Failed to get active items: {e}")
-            raise
-
-    def detect_changes(
-        self,
-        paprika_items: List[GroceryItem],
-        skylight_items: List[GroceryItem],
-        paprika_list_uid: str,
-        skylight_list_id: str
-    ) -> Dict[str, List[GroceryItem]]:
-        """
-        Detect changes between current state and last known state
-
-        Args:
-            paprika_items: Current items from Paprika
-            skylight_items: Current items from Skylight
-            paprika_list_uid: Paprika list UID being synced
-            skylight_list_id: Skylight list ID being synced
-
-        Returns:
-            Dictionary with change categories:
-            {
-                'paprika_added': [...],
-                'paprika_modified': [...],
-                'paprika_deleted': [...],
-                'skylight_added': [...],
-                'skylight_modified': [...],
-                'skylight_deleted': [...],
-                'conflicts': [...]
-            }
-        """
-        try:
-            logger.info("Detecting changes between current and last known state")
-
-            changes = {
-                'paprika_added': [],
-                'paprika_modified': [],
-                'paprika_deleted': [],
-                'skylight_added': [],
-                'skylight_modified': [],
-                'skylight_deleted': [],
-                'conflicts': []
-            }
-
-            # Get current database state
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                SELECT * FROM items
-                WHERE paprika_list_uid = ? OR skylight_list_id = ?
-                ORDER BY item_name
-            """, (paprika_list_uid, skylight_list_id))
-
-            db_items = {row['item_name']: dict(row) for row in cursor.fetchall()}
-
-            # Create lookup dictionaries for current items
-            paprika_lookup = {item.name: item for item in paprika_items}
-            skylight_lookup = {item.name: item for item in skylight_items}
-
-            # Check Paprika items for additions and modifications
-            for item in paprika_items:
-                db_item = db_items.get(item.name)
-
-                if not db_item:
-                    # New item in Paprika
-                    changes['paprika_added'].append(item)
-                else:
-                    # Check for modifications (timestamp OR checked status change)
-                    modified = False
-
-                    # Check timestamp if available
-                    db_timestamp = self._iso_to_datetime(db_item.get('paprika_timestamp'))
-                    if item.paprika_timestamp and db_timestamp:
-                        if item.paprika_timestamp > db_timestamp:
-                            modified = True
-
-                    # Check checked status change (important for Paprika which has no timestamps)
-                    if db_item['checked'] != item.checked:
-                        modified = True
-                        logger.debug(f"Paprika item '{item.name}' checked status changed: {db_item['checked']} → {item.checked}")
-
-                    if modified:
-                        changes['paprika_modified'].append(item)
-
-            # Check Skylight items for additions and modifications
-            for item in skylight_items:
-                db_item = db_items.get(item.name)
-
-                if not db_item:
-                    # New item in Skylight
-                    changes['skylight_added'].append(item)
-                else:
-                    # Check for modifications (timestamp OR checked status change)
-                    modified = False
-
-                    # Check timestamp if available
-                    db_timestamp = self._iso_to_datetime(db_item.get('skylight_timestamp'))
-                    if item.skylight_timestamp and db_timestamp:
-                        if item.skylight_timestamp > db_timestamp:
-                            modified = True
-
-                    # Check checked status change
-                    if db_item['checked'] != item.checked:
-                        modified = True
-                        logger.debug(f"Skylight item '{item.name}' checked status changed: {db_item['checked']} → {item.checked}")
-
-                    if modified:
-                        changes['skylight_modified'].append(item)
-
-            # Check for deletions - with Paprika as source of truth
-            for name, db_item in db_items.items():
-                if db_item['deleted']:
-                    continue  # Already marked as deleted
-
-                paprika_missing = name not in paprika_lookup and db_item['paprika_id']
-                skylight_missing = name not in skylight_lookup and db_item['skylight_id']
-
-                # PAPRIKA IS SOURCE OF TRUTH:
-                # If item is missing from Paprika, it should be deleted everywhere
-                if paprika_missing:
-                    # Item was deleted from Paprika (source of truth)
-                    # Mark as deleted in DB and delete from Skylight if it exists
-                    self.mark_item_deleted(db_item['id'])
-                    logger.info(f"Item '{name}' removed from Paprika (source of truth), marked as deleted in DB")
-
-                    # Only add to skylight_deleted if item actually exists in Skylight
-                    if db_item['skylight_id'] and name in skylight_lookup:
-                        deleted_item = GroceryItem(
-                            name=name,
-                            paprika_id=db_item['paprika_id'],
-                            skylight_id=db_item['skylight_id']
-                        )
-                        changes['skylight_deleted'].append(deleted_item)
-
-                elif skylight_missing:
-                    # Item was deleted from Skylight but still exists in Paprika
-                    # Since Paprika is source of truth, recreate item in Skylight
-                    if db_item['paprika_id'] and name in paprika_lookup:
-                        paprika_item = paprika_lookup[name]
-                        changes['paprika_modified'].append(paprika_item)  # This will create it in Skylight
-                        logger.info(f"Item '{name}' missing from Skylight but exists in Paprika, will recreate in Skylight")
-
-            # Check for conflicts (item modified in both systems since last sync)
-            for name in set(paprika_lookup.keys()) & set(skylight_lookup.keys()):
-                db_item = db_items.get(name)
-                if not db_item:
-                    continue
-
-                paprika_item = paprika_lookup[name]
-                skylight_item = skylight_lookup[name]
-
-                # Check if both have been modified since last sync
-                last_synced = self._iso_to_datetime(db_item.get('last_synced_at'))
-                paprika_modified = (paprika_item.paprika_timestamp and last_synced and
-                                  paprika_item.paprika_timestamp > last_synced)
-                skylight_modified = (skylight_item.skylight_timestamp and last_synced and
-                                   skylight_item.skylight_timestamp > last_synced)
-
-                if paprika_modified and skylight_modified:
-                    # Conflict detected
-                    conflict_item = GroceryItem(
-                        name=name,
-                        checked=paprika_item.checked,  # Will be resolved by timestamp
-                        paprika_id=paprika_item.paprika_id,
-                        skylight_id=skylight_item.skylight_id,
-                        paprika_timestamp=paprika_item.paprika_timestamp,
-                        skylight_timestamp=skylight_item.skylight_timestamp
-                    )
-                    changes['conflicts'].append(conflict_item)
-
-            # Log summary
-            logger.info(f"Change detection complete:")
-            for category, items in changes.items():
-                if items:
-                    logger.info(f"  {category}: {len(items)} items")
-
-            return changes
-
-        except Exception as e:
-            logger.error(f"Failed to detect changes: {e}")
-            raise
-
-    def mark_sync_complete(self, item_names: List[str], sync_timestamp: Optional[datetime] = None) -> None:
-        """
-        Mark items as successfully synced
-
-        Args:
-            item_names: Names of items that were synced
-            sync_timestamp: Timestamp of sync completion (defaults to now)
-        """
-        if not item_names:
-            return
-
-        try:
-            if sync_timestamp is None:
-                sync_timestamp = datetime.now(timezone.utc)
-
-            cursor = self.conn.cursor()
-            sync_iso = self._datetime_to_iso(sync_timestamp)
-
-            placeholders = ','.join('?' for _ in item_names)
-            cursor.execute(f"""
-                UPDATE items
-                SET last_synced_at = ?
-                WHERE item_name IN ({placeholders}) AND deleted = 0
-            """, [sync_iso] + item_names)
-
-            self.conn.commit()
-            logger.info(f"Marked {len(item_names)} items as synced at {sync_iso}")
-
-        except Exception as e:
-            logger.error(f"Failed to mark sync complete: {e}")
-            raise
+    def _row_to_skylight_item(self, row) -> SkylightItem:
+        """Convert database row to SkylightItem"""
+        return SkylightItem(
+            id=row['id'],
+            skylight_id=row['skylight_id'],
+            list_id=row['list_id'],
+            name=row['name'],
+            checked=bool(row['checked']),
+            skylight_created_at=self._parse_datetime(row['skylight_created_at']),
+            skylight_updated_at=self._parse_datetime(row['skylight_updated_at']),
+            last_synced_at=self._parse_datetime(row['last_synced_at'])
+        )
 
     def get_sync_statistics(self) -> Dict[str, Any]:
-        """
-        Get statistics about sync state
-
-        Returns:
-            Dictionary with sync statistics
-        """
+        """Get statistics about the sync state"""
         try:
             cursor = self.conn.cursor()
 
-            # Total items
-            cursor.execute("SELECT COUNT(*) as total FROM items WHERE deleted = 0")
-            total = cursor.fetchone()['total']
+            # Get counts
+            cursor.execute("SELECT COUNT(*) FROM paprika_items WHERE is_deleted = 0")
+            paprika_count = cursor.fetchone()[0]
 
-            # Items with both IDs (fully synced)
-            cursor.execute("""
-                SELECT COUNT(*) as synced FROM items
-                WHERE deleted = 0 AND paprika_id IS NOT NULL AND skylight_id IS NOT NULL
-            """)
-            synced = cursor.fetchone()['synced']
+            cursor.execute("SELECT COUNT(*) FROM skylight_items")
+            skylight_count = cursor.fetchone()[0]
 
-            # Items only in Paprika
-            cursor.execute("""
-                SELECT COUNT(*) as paprika_only FROM items
-                WHERE deleted = 0 AND paprika_id IS NOT NULL AND skylight_id IS NULL
-            """)
-            paprika_only = cursor.fetchone()['paprika_only']
+            cursor.execute("SELECT COUNT(*) FROM item_links")
+            linked_count = cursor.fetchone()[0]
 
-            # Items only in Skylight
-            cursor.execute("""
-                SELECT COUNT(*) as skylight_only FROM items
-                WHERE deleted = 0 AND paprika_id IS NULL AND skylight_id IS NOT NULL
-            """)
-            skylight_only = cursor.fetchone()['skylight_only']
+            cursor.execute("SELECT COUNT(*) FROM paprika_items WHERE is_deleted = 1")
+            deleted_count = cursor.fetchone()[0]
 
-            # Recently synced (last 24 hours)
+            # Get recent sync activity
             cursor.execute("""
-                SELECT COUNT(*) as recent FROM items
-                WHERE deleted = 0 AND last_synced_at > datetime('now', '-24 hours')
+                SELECT operation, COUNT(*) as count
+                FROM sync_log
+                WHERE created_at > datetime('now', '-1 hour')
+                GROUP BY operation
             """)
-            recent = cursor.fetchone()['recent']
+            recent_ops = dict(cursor.fetchall())
 
             return {
-                'total_items': total,
-                'fully_synced': synced,
-                'paprika_only': paprika_only,
-                'skylight_only': skylight_only,
-                'recently_synced': recent,
-                'sync_coverage': round(synced / total * 100, 1) if total > 0 else 0
+                'paprika_items': paprika_count,
+                'skylight_items': skylight_count,
+                'linked_items': linked_count,
+                'deleted_items': deleted_count,
+                'unlinked_paprika': paprika_count - linked_count,
+                'unlinked_skylight': skylight_count - linked_count,
+                'recent_operations': recent_ops,
+                'database_path': str(self.db_path)
             }
 
         except Exception as e:
             logger.error(f"Failed to get sync statistics: {e}")
-            raise
+            return {'error': str(e)}

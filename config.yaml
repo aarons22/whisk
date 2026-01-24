@@ -14,7 +14,7 @@ skylight:
   list_name: "Test List"
 
 database:
-  path: "sync_state_v2.db"  # SQLite database for Phase 6 architecture
+  path: "sync_state.db"  # SQLite database for sync architecture
 
 # Phase 6 Sync Configuration
 sync:
