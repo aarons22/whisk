@@ -164,24 +164,26 @@ Automated bidirectional sync system for grocery lists between Paprika Recipe Man
 
 **Research Status**: ✅ Complete | **Testing**: Ready but deferred | **Implementation**: Future phase TBD
 
-### 🔄 **Phase 6: Sync Engine Architecture Redesign (DEFERRED)**
-- **Status**: Research complete, implementation timing TBD
-- **Goal**: Rebuild sync logic with correct Paprika delete mechanism
-- **Key Finding**: **Asymmetric delete behavior accepted**
+### 🔄 **Phase 6: Sync Engine Architecture Redesign (IN PROGRESS)**
+- **Status**: Implementation in progress - addressing core sync architecture flaws
+- **Goal**: Rebuild sync logic to handle duplicate items, missing timestamps, and proper conflict resolution
+- **Key Finding**: **Current sync logic fundamentally broken due to API assumptions**
 
-**Delete Behavior Decision:**
-- ✅ **Paprika → Skylight**: Full deletion (sync operation → true delete)
-- ⚠️ **Skylight → Paprika**: Soft delete only (true delete impossible via API)
+**Critical Issues Being Addressed:**
+- ❌ **Paprika API provides no timestamps** - cannot do timestamp-based conflict resolution
+- ❌ **Item names not unique** - duplicate names common, breaks name-based matching
+- ❌ **Current database schema flawed** - single table cannot handle duplicate names
+- ❌ **Sync creates duplicates** instead of syncing existing items
 
-**Accepted Limitation**: Skylight deletions will mark Paprika items as "purchased/checked" rather than removing them completely. This is due to Paprika's sync-only delete architecture and is **documented and accepted**.
+**Implementation Tasks:**
+- 🔄 Design new database schema with separate tables for Paprika/Skylight items
+- 🔄 Implement synthetic timestamp management for Paprika items
+- 🔄 Build item linking algorithm with fuzzy matching for duplicate names
+- 🔄 Create configurable conflict resolution (Paprika as source of truth)
+- 🔄 Add sync operation logging and debugging tools
+- 🔄 Build comprehensive test suite with duplicate item scenarios
 
-**Ready for Implementation**:
-- Complete test protocol prepared
-- Safe testing with production data protection
-- Full restoration capability available
-- Architecture redesign strategy defined
-
-### 🔄 **Phase 7: Production Hardening (MOVED)**
+### 🔄 **Phase 7: Production Hardening (PENDING)**
 - **Status**: Pending Phase 6 completion
 - **Goal**: Production deployment readiness
 - **Components**: Enhanced security, macOS LaunchAgent, comprehensive documentation
@@ -263,7 +265,7 @@ paprika-skylight/
 - ✅ Phase 3: State tracking and change detection working
 - ✅ Phase 4: Bidirectional sync with conflict resolution working
 - ✅ Phase 5: Automated scheduling and configuration complete
-- 🔄 Phase 6: Production deployment ready
+- ✅ Phase 6: Sync engine architecture redesign working
 
 ## 📈 Progress Metrics
 
@@ -286,14 +288,40 @@ paprika-skylight/
 - **Configuration**: Template-based setup with examples
 - **Error Handling**: Structured logging with context
 
+## 📋 Backlog (Future Work)
+
+### **Paprika Delete Mechanism Implementation (DEFERRED)**
+- **Priority**: Medium (functionality works with soft-delete workaround)
+- **Description**: Implement true Paprika deletion using full-sync operations
+- **Research Status**: ✅ Complete - Charles proxy analysis revealed POST to `/api/v2/sync/groceries/`
+- **Implementation Ready**: ✅ Ultra-safe test protocol prepared with production data protection
+
+**Technical Details:**
+- Paprika deletion = GET all items (200KB+) → filter out deleted item → POST complete array
+- Requires rewriting `PaprikaClient.remove_item()` to use full-sync approach
+- Must add new methods: `_get_all_grocery_items()` and `_sync_complete_grocery_state()`
+- Need state caching to minimize expensive full-sync operations
+
+**Delete Behavior Decision (Documented & Accepted):**
+- ✅ **Paprika → Skylight**: Full deletion (sync operation → true delete)
+- ⚠️ **Skylight → Paprika**: Soft delete only (marked as purchased due to API design)
+
+**Ready for Implementation:**
+- Test files prepared: `scripts/ultra_safe_paprika_test.py`, `scripts/restore_paprika_backup.py`
+- Complete backup and restoration capability available
+- Architecture redesign strategy defined in `PAPRIKA_DELETE_RESEARCH.md`
+
+---
+
 ## 🚀 Next Steps
 
-### **Immediate (Phase 6)**
-1. Enhance credential security and validation
-2. Implement rate limiting for API protection
-3. Create macOS LaunchAgent for auto-start
-4. Write comprehensive README.md documentation
-5. Add production monitoring and error alerting
+### **Phase 6 Tasks (Sync Engine Architecture Redesign)**
+1. **Redesign database schema** - separate tables for Paprika/Skylight items with proper relationships
+2. **Implement synthetic timestamps** - create reliable timestamps for Paprika items lacking API timestamps
+3. **Build item linking algorithm** - handle duplicate names with fuzzy matching and confidence scoring
+4. **Create configurable conflict resolution** - Paprika as source of truth with fallback strategies
+5. **Add comprehensive logging** - sync operation audit trail for debugging
+6. **Build test suite** - handle duplicate items and edge cases
 
 ### **Current Status** 📋
 **Phase 5 is complete** and **major research breakthrough achieved**:
@@ -343,8 +371,6 @@ paprika-skylight/
 
 ---
 
-**Next Milestone**: Phase 6 - Sync Engine Architecture Redesign
-**Implementation Timing**: TBD - Research complete, ready when decided
+**Next Milestone**: Phase 7 - Production Hardening
+**Implementation Status**: Phase 6 in progress - Sync Engine Architecture Redesign
 **Success Criteria**: Reliable bidirectional sync with proper Paprika full-sync delete operations
-
-**Current Decision**: Architecture redesign deferred pending timing decision. Delete behavior asymmetry accepted as documented limitation.

@@ -91,9 +91,11 @@ CREATE TABLE items (
 
 **Result**: Creates duplicates instead of syncing, no conflict resolution possible.
 
-### 5. **Delete Operation Handling**
+### 5. **Delete Operation Handling (DEFERRED)**
 
 **🚨 MAJOR DISCOVERY** (via Charles Proxy analysis):
+
+**Status**: ⏸️ **IMPLEMENTATION DEFERRED** - Research complete, moved to backlog
 
 **Paprika Delete Behavior - CORRECTED**:
 ```http
@@ -120,6 +122,8 @@ Content-Type: application/octet-stream
 - Items are permanently removed
 
 **Current Handling**: Using wrong DELETE endpoint for Paprika - should use sync endpoint with proper item state.
+
+**📋 MOVED TO BACKLOG**: Full implementation details moved to PROJECT.md backlog section.
 
 ---
 
@@ -279,59 +283,43 @@ def resolve_conflicts():
                     p_item.last_modified_at = datetime.utcnow()
 ```
 
-#### **Phase 4: Delete Operations Implementation**
+#### **Phase 4: Sync Operations (DELETE LOGIC DEFERRED)**
 ```python
-def delete_paprika_item(item_id, list_name):
-    """Proper Paprika deletion via sync endpoint"""
+# NOTE: Delete operations moved to backlog - implementing sync without delete for Phase 6
 
-    # Get current items from list
-    current_items = self.get_grocery_list(list_name)
+def handle_item_additions():
+    """Handle new items that need to be created in other system"""
+    unlinked_paprika = db.get_unlinked_paprika_items()
+    unlinked_skylight = db.get_unlinked_skylight_items()
 
-    # Remove the item to delete from the array
-    items_to_sync = [item for item in current_items
-                     if item.paprika_id != item_id]
+    for p_item in unlinked_paprika:
+        # Create in Skylight
+        skylight_id = skylight_api.add_item(p_item.name, p_item.checked, skylight_list_name)
+        create_link(p_item, skylight_id)
 
-    # Convert to API format
-    api_items = []
-    for item in items_to_sync:
-        api_items.append({
-            "uid": item.paprika_id,
-            "recipe_uid": None,
-            "name": item.name,
-            "order_flag": 0,
-            "purchased": item.checked,
-            "aisle": "",  # Let Paprika auto-assign
-            "ingredient": item.name.lower(),
-            "recipe": None,
-            "instruction": "",
-            "quantity": "",
-            "separate": False,
-            "list_uid": self.get_list_uid_by_name(list_name)
-        })
+    for s_item in unlinked_skylight:
+        # Create in Paprika
+        paprika_id = paprika_api.add_item(s_item.name, s_item.checked, paprika_list_name)
+        create_link(paprika_id, s_item)
 
-    # Sync the modified array (without deleted item)
-    return self._sync_items_array(api_items)
+def handle_item_updates():
+    """Handle checked status updates between systems"""
+    linked_items = db.get_linked_items_with_conflicts()
 
-def _sync_items_array(self, items_array):
-    """Send complete items array to Paprika sync endpoint"""
-    import gzip
-    import json
+    for link in linked_items:
+        p_item = link.paprika_item
+        s_item = link.skylight_item
 
-    # Gzip compress the JSON array
-    json_data = json.dumps(items_array).encode('utf-8')
-    compressed_data = gzip.compress(json_data)
+        if p_item.checked != s_item.checked:
+            # Apply conflict resolution
+            if config.paprika_always_wins:
+                skylight_api.update_item(s_item.skylight_id, checked=p_item.checked)
+            else:
+                paprika_api.update_item(p_item.paprika_id, checked=s_item.checked)
 
-    # Send as multipart form data
-    files = {'data': ('file', compressed_data, 'application/octet-stream')}
-    headers = {'Authorization': f'Bearer {self.token}'}
-
-    response = requests.post(
-        'https://www.paprikaapp.com/api/v2/sync/groceries/',
-        files=files,
-        headers=headers
-    )
-
-    return response.status_code == 200
+# DELETE HANDLING DEFERRED TO BACKLOG
+# - Paprika delete via full-sync operation (complex implementation)
+# - Current soft-delete approach sufficient for Phase 6
 ```
 
 ### **Configuration Options**
@@ -373,25 +361,31 @@ sync:
 
 ## 🚀 Implementation Plan: New Phase 6
 
-### **Phase 6: Sync Engine Redesign**
+### **Phase 6: Sync Engine Redesign (DELETE LOGIC EXCLUDED)**
 - **Goal**: Rebuild sync logic with proper architecture for no-timestamp scenario
 - **Duration**: 2-3 development sessions
 - **Success Criteria**: Reliable bidirectional sync with duplicate handling and Paprika as source of truth
 
-**Tasks**:
-1. Design and implement new database schema (3 tables)
-2. Create synthetic timestamp management for Paprika items
-3. Implement item linking algorithm with fuzzy matching
-4. Build new conflict resolution with configurable strategies
-5. Add proper deletion handling for both systems
-6. Create comprehensive test suite with duplicate scenarios
-7. Add sync operation logging and debugging tools
+**Tasks (Phase 6)**:
+1. ✅ Design and implement new database schema (3 tables)
+2. ✅ Create synthetic timestamp management for Paprika items
+3. ✅ Implement item linking algorithm with fuzzy matching
+4. ✅ Build new conflict resolution with configurable strategies
+5. ❌ **DEFERRED**: Proper deletion handling for both systems (moved to backlog)
+6. ✅ Create comprehensive test suite with duplicate scenarios
+7. ✅ Add sync operation logging and debugging tools
 
-### **Phase 7: Production Hardening** (formerly Phase 6)
+**Phase 7: Production Hardening** (formerly Phase 6)
 - Enhanced credential security
 - macOS LaunchAgent for auto-start
 - Comprehensive documentation
 - Production monitoring
+
+**BACKLOG: Paprika Delete Implementation**
+- Implement full-sync delete mechanism using POST `/api/v2/sync/groceries/`
+- Add methods: `_get_all_grocery_items()`, `_sync_complete_grocery_state()`
+- Test with ultra-safe protocol (scripts already prepared)
+- Handle asymmetric delete behavior (Paprika→Skylight full delete, Skylight→Paprika soft delete)
 
 ---
 
