@@ -213,6 +213,15 @@ def cmd_lists(args) -> int:
     try:
         config_manager = ConfigManager()
 
+        # Handle list pair management operations first
+        if args.add:
+            return cmd_add_list_pair(config_manager)
+        elif args.remove:
+            return cmd_remove_list_pair(config_manager, args.remove)
+        elif args.toggle:
+            return cmd_toggle_list_pair(config_manager, args.toggle)
+
+        # Handle service discovery
         if args.service == "paprika":
             print("📋 Discovering Paprika Lists...")
 
@@ -361,6 +370,185 @@ def cmd_config(args) -> int:
         return 1
 
 
+def cmd_add_list_pair(config_manager) -> int:
+    """Add a new list pair interactively"""
+    if not config_manager.config_exists():
+        print("❌ No configuration found. Run 'whisk setup' first.")
+        return 1
+
+    config = config_manager.load_config()
+
+    print("🆕 Adding New List Pair")
+    print("Let's discover available lists from both services...\n")
+
+    # Get available lists from both services
+    try:
+        # Import here to avoid circular imports
+        from .paprika_client import PaprikaClient
+        from .skylight_client import SkylightClient
+
+        paprika_token_cache = config_manager.config_dir / config.paprika_token_cache
+        paprika_client = PaprikaClient(
+            config.paprika_email,
+            config.paprika_password,
+            str(paprika_token_cache)
+        )
+        paprika_client.authenticate()
+
+        skylight_token_cache = config_manager.config_dir / config.skylight_token_cache
+        skylight_client = SkylightClient(
+            config.skylight_email,
+            config.skylight_password,
+            config.skylight_frame_id,
+            str(skylight_token_cache)
+        )
+        skylight_client.authenticate()
+
+        # Get Paprika lists
+        print("📋 Available Paprika lists:")
+        paprika_lists = paprika_client.get_grocery_lists()
+        for i, lst in enumerate(paprika_lists, 1):
+            name = lst.get('name', 'Unnamed List')
+            is_default = " (default)" if lst.get('is_default', False) else ""
+            print(f"  {i}. {name}{is_default}")
+
+        # Get Skylight lists
+        print("\n📋 Available Skylight lists:")
+        skylight_lists = skylight_client.get_lists()
+        for i, lst in enumerate(skylight_lists, 1):
+            name = lst.get('attributes', {}).get('label', 'Unnamed List')
+            is_default = " (default)" if lst.get('attributes', {}).get('default_grocery_list', False) else ""
+            print(f"  {i}. {name}{is_default}")
+
+        # Interactive selection
+        print("\n" + "="*50)
+
+        # Select Paprika list
+        while True:
+            try:
+                paprika_choice = input(f"\nSelect Paprika list (1-{len(paprika_lists)}): ").strip()
+                paprika_idx = int(paprika_choice) - 1
+                if 0 <= paprika_idx < len(paprika_lists):
+                    paprika_list_name = paprika_lists[paprika_idx]['name']
+                    break
+                else:
+                    print(f"❌ Please enter a number between 1 and {len(paprika_lists)}")
+            except (ValueError, KeyboardInterrupt):
+                print("\n❌ Operation cancelled")
+                return 1
+
+        # Select Skylight list
+        while True:
+            try:
+                skylight_choice = input(f"Select Skylight list (1-{len(skylight_lists)}): ").strip()
+                skylight_idx = int(skylight_choice) - 1
+                if 0 <= skylight_idx < len(skylight_lists):
+                    skylight_list_name = skylight_lists[skylight_idx]['attributes']['label']
+                    break
+                else:
+                    print(f"❌ Please enter a number between 1 and {len(skylight_lists)}")
+            except (ValueError, KeyboardInterrupt):
+                print("\n❌ Operation cancelled")
+                return 1
+
+        # Check for duplicate
+        for existing_pair in config.list_pairs:
+            if (existing_pair.paprika_list == paprika_list_name and
+                existing_pair.skylight_list == skylight_list_name):
+                print(f"\n❌ This list pair already exists!")
+                return 1
+
+        # Confirm and add
+        print(f"\n✨ New list pair: {paprika_list_name} ↔ {skylight_list_name}")
+        confirm = input("Add this pair? (y/N): ").strip().lower()
+
+        if confirm == 'y' or confirm == 'yes':
+            from .config import ListPairConfig
+            new_pair = ListPairConfig(
+                paprika_list=paprika_list_name,
+                skylight_list=skylight_list_name,
+                enabled=True
+            )
+            config.list_pairs.append(new_pair)
+            config_manager.save_config(config)
+
+            print(f"✅ Added new list pair: {paprika_list_name} ↔ {skylight_list_name}")
+            print("🔄 Run 'whisk sync' to start syncing this pair!")
+            return 0
+        else:
+            print("❌ Operation cancelled")
+            return 1
+
+    except Exception as e:
+        print(f"❌ Failed to add list pair: {e}")
+        return 1
+
+
+def cmd_remove_list_pair(config_manager, pair_number: int) -> int:
+    """Remove a list pair by number"""
+    if not config_manager.config_exists():
+        print("❌ No configuration found. Run 'whisk setup' first.")
+        return 1
+
+    config = config_manager.load_config()
+
+    if not config.list_pairs:
+        print("❌ No list pairs configured.")
+        return 1
+
+    if pair_number < 1 or pair_number > len(config.list_pairs):
+        print(f"❌ Invalid pair number. Valid range: 1-{len(config.list_pairs)}")
+        print("💡 Use 'whisk lists' to see numbered list pairs.")
+        return 1
+
+    # Get the pair to remove
+    pair_to_remove = config.list_pairs[pair_number - 1]
+
+    # Confirm removal
+    print(f"🗑️ Remove list pair: {pair_to_remove.paprika_list} ↔ {pair_to_remove.skylight_list}")
+    confirm = input("Are you sure? (y/N): ").strip().lower()
+
+    if confirm == 'y' or confirm == 'yes':
+        config.list_pairs.pop(pair_number - 1)
+        config_manager.save_config(config)
+
+        print(f"✅ Removed list pair: {pair_to_remove.paprika_list} ↔ {pair_to_remove.skylight_list}")
+        return 0
+    else:
+        print("❌ Operation cancelled")
+        return 1
+
+
+def cmd_toggle_list_pair(config_manager, pair_number: int) -> int:
+    """Toggle enabled/disabled status of a list pair"""
+    if not config_manager.config_exists():
+        print("❌ No configuration found. Run 'whisk setup' first.")
+        return 1
+
+    config = config_manager.load_config()
+
+    if not config.list_pairs:
+        print("❌ No list pairs configured.")
+        return 1
+
+    if pair_number < 1 or pair_number > len(config.list_pairs):
+        print(f"❌ Invalid pair number. Valid range: 1-{len(config.list_pairs)}")
+        print("💡 Use 'whisk lists' to see numbered list pairs.")
+        return 1
+
+    # Toggle the pair
+    pair = config.list_pairs[pair_number - 1]
+    old_status = "enabled" if pair.enabled else "disabled"
+    pair.enabled = not pair.enabled
+    new_status = "enabled" if pair.enabled else "disabled"
+
+    config_manager.save_config(config)
+
+    print(f"🔄 Toggled list pair: {pair.paprika_list} ↔ {pair.skylight_list}")
+    print(f"   Status: {old_status} → {new_status}")
+    return 0
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the main argument parser"""
     parser = argparse.ArgumentParser(
@@ -377,6 +565,9 @@ Examples:
   whisk status                   # Show daemon status
   whisk lists                    # Show configured list pairs
   whisk lists paprika            # Show available Paprika lists
+  whisk lists --add              # Add a new list pair
+  whisk lists --remove 2         # Remove list pair #2
+  whisk lists --toggle 1         # Enable/disable list pair #1
   whisk config show              # Display current configuration
 
 For detailed help on any command, use: whisk <command> --help
@@ -465,6 +656,23 @@ For detailed help on any command, use: whisk <command> --help
         nargs="?",
         choices=["paprika", "skylight"],
         help="Show available lists from specific service (paprika or skylight)"
+    )
+    lists_parser.add_argument(
+        "--add",
+        action="store_true",
+        help="Add a new list pair interactively"
+    )
+    lists_parser.add_argument(
+        "--remove",
+        metavar="N",
+        type=int,
+        help="Remove list pair by number (use 'whisk lists' to see numbers)"
+    )
+    lists_parser.add_argument(
+        "--toggle",
+        metavar="N",
+        type=int,
+        help="Toggle enabled/disabled status of list pair by number"
     )
 
     # Config command

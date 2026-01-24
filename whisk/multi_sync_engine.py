@@ -453,9 +453,9 @@ class WhiskSyncEngine:
                     # Create a new ListItem to store in database
                     from .models import ListItem
                     new_skylight_item = ListItem(
-                        id=skylight_id,
                         name=p_item.name,
-                        checked=p_item.checked
+                        checked=p_item.checked,
+                        skylight_id=skylight_id
                     )
 
                     # Store the new Skylight item in database
@@ -482,9 +482,9 @@ class WhiskSyncEngine:
                     # Create a new ListItem to store in database
                     from .models import ListItem
                     new_paprika_item = ListItem(
-                        id=paprika_id,
                         name=s_item.name,
-                        checked=s_item.checked
+                        checked=s_item.checked,
+                        paprika_id=paprika_id
                     )
 
                     # Store the new Paprika item in database
