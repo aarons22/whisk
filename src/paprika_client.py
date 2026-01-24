@@ -33,6 +33,7 @@ class PaprikaClient:
         self.token_cache_file = Path(token_cache_file)
         self.token: Optional[str] = None
         self._session = requests.Session()
+        self._grocery_lists_cache: Optional[List[Dict[str, Any]]] = None
 
     def authenticate(self) -> None:
         """Authenticate with Paprika API using V1 auth (more stable than V2)"""
@@ -40,15 +41,23 @@ class PaprikaClient:
             logger.info("Authenticating with Paprika...")
 
             url = f"{self.BASE_URL}/v1/account/login/"
+
+            # V1 API requires HTTP Basic Auth + form data
+            from requests.auth import HTTPBasicAuth
+            auth = HTTPBasicAuth(self.email, self.password)
             data = {"email": self.email, "password": self.password}
 
-            response = self._session.post(url, json=data)
+            response = self._session.post(url, data=data, auth=auth)
             response.raise_for_status()
 
             result = response.json()
-            self.token = result.get("result", {}).get("token")
+            logger.debug(f"Auth response: {result}")
+
+            # Response format: {"result": {"token": "..."}}
+            self.token = result.get("result", {}).get("token") or result.get("token")
 
             if not self.token:
+                logger.error(f"Unexpected auth response format: {result}")
                 raise Exception("No token in authentication response")
 
             logger.info("Successfully authenticated with Paprika")
@@ -122,7 +131,11 @@ class PaprikaClient:
         self.authenticate()
 
     def _make_request(
-        self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None
+        self,
+        method: str,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        gzip_form_data: bool = False,
     ) -> Dict[str, Any]:
         """
         Make authenticated request to Paprika API
@@ -131,6 +144,7 @@ class PaprikaClient:
             method: HTTP method (GET, POST, DELETE, etc.)
             endpoint: API endpoint (e.g., "/v2/sync/groceries/")
             data: Optional data payload for POST/PUT
+            gzip_form_data: If True, gzip compress data and send as multipart form
 
         Returns:
             Parsed JSON response
@@ -147,7 +161,16 @@ class PaprikaClient:
         }
 
         try:
-            response = self._session.request(method, url, json=data, headers=headers)
+            # Prepare request based on data format
+            if gzip_form_data and data:
+                # Gzip compress JSON and send as multipart form data
+                json_data = json.dumps(data).encode("utf-8")
+                compressed_data = gzip.compress(json_data)
+                files = {"data": ("data", compressed_data, "application/octet-stream")}
+                response = self._session.request(method, url, files=files, headers=headers)
+            else:
+                # Regular JSON request
+                response = self._session.request(method, url, json=data, headers=headers)
 
             # Handle 401 (token expired) - re-authenticate and retry once
             if response.status_code == 401:
@@ -159,14 +182,27 @@ class PaprikaClient:
 
                 # Retry request with new token
                 headers["Authorization"] = f"Bearer {self.token}"
-                response = self._session.request(method, url, json=data, headers=headers)
+                if gzip_form_data and data:
+                    json_data = json.dumps(data).encode("utf-8")
+                    compressed_data = gzip.compress(json_data)
+                    files = {"data": ("data", compressed_data, "application/octet-stream")}
+                    response = self._session.request(method, url, files=files, headers=headers)
+                else:
+                    response = self._session.request(method, url, json=data, headers=headers)
 
             response.raise_for_status()
 
             # Handle gzip-compressed responses
             content = response.content
-            if response.headers.get("Content-Encoding") == "gzip":
-                content = gzip.decompress(content)
+            content_encoding = response.headers.get("Content-Encoding", "").lower()
+
+            # Try to decompress if content encoding indicates gzip
+            # or if the content starts with gzip magic number
+            if content_encoding == "gzip" or (content and content[:2] == b"\x1f\x8b"):
+                try:
+                    content = gzip.decompress(content)
+                except Exception as e:
+                    logger.debug(f"Failed to decompress gzip (might not be compressed): {e}")
 
             return json.loads(content)
 
@@ -177,24 +213,68 @@ class PaprikaClient:
             logger.error(f"Request failed: {e}")
             raise
 
-    def get_grocery_list(self, list_name: str = "Test List") -> List[GroceryItem]:
+    def get_grocery_lists(self) -> List[Dict[str, Any]]:
         """
-        Get all items from grocery list
-
-        Args:
-            list_name: Name of the grocery list (currently unused - Paprika returns all items)
+        Get all grocery lists with their UIDs and names
 
         Returns:
-            List of GroceryItem objects
+            List of grocery list dictionaries with 'uid', 'name', 'is_default', etc.
+        """
+        if self._grocery_lists_cache is None:
+            try:
+                logger.debug("Fetching grocery lists from Paprika...")
+                result = self._make_request("GET", "/v2/sync/grocerylists/")
+                self._grocery_lists_cache = result.get("result", [])
+                logger.info(f"Retrieved {len(self._grocery_lists_cache)} grocery lists")
+            except Exception as e:
+                logger.error(f"Failed to get grocery lists from Paprika: {e}")
+                raise
+
+        return self._grocery_lists_cache
+
+    def get_list_uid_by_name(self, list_name: str) -> Optional[str]:
+        """
+        Get the UID of a grocery list by its name
+
+        Args:
+            list_name: Name of the grocery list
+
+        Returns:
+            List UID or None if not found
+        """
+        lists = self.get_grocery_lists()
+        for grocery_list in lists:
+            if grocery_list.get("name") == list_name:
+                return grocery_list.get("uid")
+        return None
+
+    def get_grocery_list(self, list_name: str = "Test List") -> List[GroceryItem]:
+        """
+        Get all items from a specific grocery list
+
+        Args:
+            list_name: Name of the grocery list to filter by
+
+        Returns:
+            List of GroceryItem objects from the specified list
         """
         try:
-            logger.debug("Fetching grocery items from Paprika...")
+            logger.debug(f"Fetching grocery items from Paprika list: {list_name}")
+
+            # Get the list UID for filtering
+            list_uid = self.get_list_uid_by_name(list_name)
+            if not list_uid:
+                logger.warning(f"Grocery list '{list_name}' not found, returning all items")
 
             result = self._make_request("GET", "/v2/sync/groceries/")
             groceries = result.get("result", [])
 
             items = []
             for grocery in groceries:
+                # Filter by list_uid if specified
+                if list_uid and grocery.get("list_uid") != list_uid:
+                    continue
+
                 # Parse timestamp
                 timestamp = None
                 updated_at = grocery.get("updated_at") or grocery.get("created")
@@ -216,41 +296,74 @@ class PaprikaClient:
                 )
                 items.append(item)
 
-            logger.info(f"Retrieved {len(items)} items from Paprika")
+            logger.info(f"Retrieved {len(items)} items from '{list_name}'")
             return items
 
         except Exception as e:
             logger.error(f"Failed to get grocery list from Paprika: {e}")
             raise
 
-    def add_item(self, name: str, checked: bool = False) -> str:
+    def add_item(self, name: str, checked: bool = False, list_name: str = "Test List") -> str:
         """
         Add item to grocery list (aisle auto-assigned by Paprika)
 
         Args:
             name: Item name
             checked: Whether item is checked/purchased
+            list_name: Name of the grocery list to add to (default: "Test List")
 
         Returns:
             Paprika UID of created item
         """
         try:
-            logger.debug(f"Adding item to Paprika: {name} (checked={checked})")
+            logger.debug(f"Adding item to Paprika list '{list_name}': {name} (checked={checked})")
 
-            # Create grocery item payload
-            # Note: Paprika auto-assigns aisle, so we don't specify it
-            data = {
+            # Get the list UID
+            list_uid = self.get_list_uid_by_name(list_name)
+            if not list_uid:
+                logger.warning(f"List '{list_name}' not found, using default list")
+                # Get default list
+                lists = self.get_grocery_lists()
+                default_list = next((l for l in lists if l.get("is_default")), None)
+                if default_list:
+                    list_uid = default_list.get("uid")
+                    logger.debug(f"Using default list: {default_list.get('name')}")
+
+            # Generate a UUID for the item
+            import uuid
+            uid = str(uuid.uuid4()).upper()
+
+            # Create grocery item - API requires gzip-compressed JSON array
+            grocery_item = {
+                "uid": uid,
+                "recipe_uid": None,
                 "name": name,
+                "order_flag": 0,
                 "purchased": checked,
+                "aisle": "",  # Will be auto-assigned by Paprika
+                "ingredient": name.lower(),  # Use name as ingredient
+                "recipe": None,
+                "instruction": "",
+                "quantity": "",
+                "separate": False,
+                "list_uid": list_uid,  # Specify which list to add to
             }
 
-            result = self._make_request("POST", "/v2/sync/groceries/", data=data)
-            uid = result.get("result", {}).get("uid")
+            # API expects an array, send as gzipped multipart form data
+            result = self._make_request(
+                "POST", "/v2/sync/groceries/", data=[grocery_item], gzip_form_data=True
+            )
+            logger.debug(f"Create response: {result}")
 
-            if not uid:
-                raise Exception("No UID returned from create operation")
+            # Check for success
+            if result.get("error"):
+                error_msg = result.get("error", {}).get("message", "Unknown error")
+                raise Exception(f"API error: {error_msg}")
 
-            logger.info(f"Added item to Paprika: {name} (uid={uid})")
+            if not result.get("result"):
+                raise Exception("Create operation did not return success")
+
+            logger.info(f"Added item to Paprika '{list_name}': {name} (uid={uid})")
             return uid
 
         except Exception as e:
@@ -269,12 +382,35 @@ class PaprikaClient:
         try:
             logger.debug(f"Updating item in Paprika: {paprika_id} (checked={checked})")
 
-            # Build update payload
-            data = {"uid": paprika_id, "purchased": checked}
-            if name:
-                data["name"] = name
+            # Get current item details first
+            items = self.get_grocery_list()
+            current_item = next((item for item in items if item.paprika_id == paprika_id), None)
 
-            self._make_request("POST", f"/v2/sync/groceries/{paprika_id}", data=data)
+            if not current_item:
+                raise Exception(f"Item {paprika_id} not found in grocery list")
+
+            # Get full item data from API
+            result = self._make_request("GET", "/v2/sync/groceries/")
+            full_items = result.get("result", [])
+            full_item = next((item for item in full_items if item["uid"] == paprika_id), None)
+
+            if not full_item:
+                raise Exception(f"Item {paprika_id} not found in full item list")
+
+            # Update fields
+            full_item["purchased"] = checked
+            if name:
+                full_item["name"] = name
+                full_item["ingredient"] = name.lower()
+
+            # Send as gzipped array
+            result = self._make_request(
+                "POST", "/v2/sync/groceries/", data=[full_item], gzip_form_data=True
+            )
+
+            if not result.get("result"):
+                raise Exception("Update operation did not return success")
+
             logger.info(f"Updated item in Paprika: {paprika_id}")
 
         except Exception as e:
@@ -285,13 +421,30 @@ class PaprikaClient:
         """
         Remove item from grocery list
 
+        Note: Paprika uses a sync-based API. To delete an item, we need to
+        upload the full list without the deleted item, or mark it appropriately.
+        For now, we'll try the DELETE endpoint.
+
         Args:
             paprika_id: Paprika UID of the item to remove
         """
         try:
             logger.debug(f"Removing item from Paprika: {paprika_id}")
-            self._make_request("DELETE", f"/v2/sync/groceries/{paprika_id}")
-            logger.info(f"Removed item from Paprika: {paprika_id}")
+
+            # Try DELETE endpoint first
+            try:
+                self._make_request("DELETE", f"/v2/sync/groceries/{paprika_id}")
+                logger.info(f"Removed item from Paprika: {paprika_id}")
+                return
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code != 404:
+                    raise
+
+            # DELETE endpoint might not be supported, fallback approach:
+            # Set purchased=True and order_flag very high to "hide" it
+            logger.debug("DELETE endpoint not supported, using update workaround")
+            self.update_item(paprika_id, checked=True)
+            logger.info(f"Marked item as purchased in Paprika: {paprika_id}")
 
         except Exception as e:
             logger.error(f"Failed to remove item from Paprika: {e}")
