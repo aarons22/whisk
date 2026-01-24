@@ -31,8 +31,8 @@ class SyncEngine:
         paprika_client: PaprikaClient,
         skylight_client: SkylightClient,
         state_manager: StateManager,
-        paprika_list_name: str = "Test List",
-        skylight_list_name: str = "Test List",
+        paprika_list_name: str,
+        skylight_list_name: str,
         config: dict = None
     ):
         """

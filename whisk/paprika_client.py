@@ -248,7 +248,7 @@ class PaprikaClient:
                 return grocery_list.get("uid")
         return None
 
-    def get_grocery_list(self, list_name: str = "Test List") -> List[GroceryItem]:
+    def get_grocery_list(self, list_name: str) -> List[GroceryItem]:
         """
         Get all items from a specific grocery list
 
@@ -303,14 +303,14 @@ class PaprikaClient:
             logger.error(f"Failed to get grocery list from Paprika: {e}")
             raise
 
-    def add_item(self, name: str, checked: bool = False, list_name: str = "Test List") -> str:
+    def add_item(self, name: str, checked: bool = False, list_name: str) -> str:
         """
         Add item to grocery list (aisle auto-assigned by Paprika)
 
         Args:
             name: Item name
             checked: Whether item is checked/purchased
-            list_name: Name of the grocery list to add to (default: "Test List")
+            list_name: Name of the grocery list to add to
 
         Returns:
             Paprika UID of created item
@@ -370,7 +370,7 @@ class PaprikaClient:
             logger.error(f"Failed to add item to Paprika: {e}")
             raise
 
-    def update_item(self, paprika_id: str, checked: bool, name: Optional[str] = None) -> None:
+    def update_item(self, paprika_id: str, checked: bool, name: Optional[str] = None, list_name: str = None) -> None:
         """
         Update item (checked status or name)
 
@@ -378,12 +378,16 @@ class PaprikaClient:
             paprika_id: Paprika UID of the item
             checked: New checked status
             name: Optional new name for the item
+            list_name: Name of the grocery list containing the item
         """
+        if list_name is None:
+            raise ValueError("list_name parameter is required")
+
         try:
             logger.debug(f"Updating item in Paprika: {paprika_id} (checked={checked})")
 
             # Get current item details first
-            items = self.get_grocery_list()
+            items = self.get_grocery_list(list_name)
             current_item = next((item for item in items if item.paprika_id == paprika_id), None)
 
             if not current_item:

@@ -95,8 +95,8 @@ class ConflictResolver:
             logger.error(f"Failed to capture pre-sync states: {e}")
             self._pre_sync_states = {}
 
-    def resolve_all_conflicts(self, paprika_list_name: str = "Test List",
-                             skylight_list_name: str = "Test List") -> List[ConflictResolution]:
+    def resolve_all_conflicts(self, paprika_list_name: str,
+                             skylight_list_name: str) -> List[ConflictResolution]:
         """
         Resolve all conflicts between linked items
 

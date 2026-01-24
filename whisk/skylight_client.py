@@ -1,9 +1,11 @@
-"""Skylight API client using actual API structure discovered via browser DevTools"""
+"""Skylight API client with optimized authentication and token caching"""
 
 import base64
 import json
 import logging
+import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 import requests
@@ -14,11 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 class SkylightClient:
-    """Client for interacting with Skylight grocery lists via discovered API structure"""
+    """Client for interacting with Skylight grocery lists with optimized authentication"""
 
     BASE_URL = "https://app.ourskylight.com/api"
 
-    def __init__(self, email: str, password: str, frame_id: str):
+    def __init__(self, email: str, password: str, frame_id: str, token_cache_file: str = ".skylight_token"):
         """
         Initialize Skylight client with credentials
 
@@ -26,103 +28,204 @@ class SkylightClient:
             email: Skylight account email
             password: Skylight account password
             frame_id: Skylight frame ID (e.g., "4878053")
+            token_cache_file: Path to token cache file
         """
         self.email = email
         self.password = password
         self.frame_id = frame_id
         self.user_id: Optional[str] = None
         self.auth_token: Optional[str] = None
+        self.token_cache_file = Path(token_cache_file)
         self._session = requests.Session()
         self._user_data: Optional[Dict[str, Any]] = None
         self._frames_cache: Optional[List[Dict[str, Any]]] = None
         self._lists_cache: Optional[List[Dict[str, Any]]] = None
 
     def authenticate(self) -> None:
-        """Authenticate with Skylight API using discovered two-step process"""
+        """Authenticate with Skylight API using optimized approach with token caching"""
+        # Try loading cached token first
+        if self._load_cached_token():
+            logger.debug("Using cached Skylight token")
+            return
+
         try:
             logger.info("Authenticating with Skylight...")
 
-            # Step 1: Try to get auth token with email/password (need to find the endpoint)
-            # Common endpoints to try for login
-            login_endpoints = [
-                "/sessions",
-                "/auth/login",
-                "/login",
-                "/user/login",
-                "/authenticate"
-            ]
+            # Try direct known method first (from CLAUDE.md research)
+            if self._authenticate_direct():
+                logger.info(f"✅ Skylight authenticated successfully (user_id: {self.user_id})")
+                self._cache_token()
+                return
 
-            auth_token = None
-            user_id = None
+            # Fallback to multi-endpoint approach
+            logger.debug("Direct authentication failed, trying fallback methods...")
+            if self._authenticate_fallback():
+                logger.info(f"✅ Skylight authenticated via fallback (user_id: {self.user_id})")
+                self._cache_token()
+                return
 
-            for endpoint in login_endpoints:
-                try:
-                    url = f"{self.BASE_URL}{endpoint}"
-                    payload = {
-                        "user": {
-                            "email": self.email,
-                            "password": self.password
-                        }
-                    }
-
-                    # Try with various payload formats
-                    payloads_to_try = [
-                        payload,
-                        {"email": self.email, "password": self.password},
-                        {"username": self.email, "password": self.password}
-                    ]
-
-                    for test_payload in payloads_to_try:
-                        logger.debug(f"Trying {endpoint} with payload format")
-                        response = self._session.post(url, json=test_payload, timeout=10)
-
-                        if response.status_code == 200:
-                            data = response.json()
-                            logger.debug(f"Login response: {data}")
-
-                            # Look for user_id and token in various response formats
-                            if "user_id" in data and ("token" in data or "auth_token" in data):
-                                user_id = str(data["user_id"])
-                                auth_token = data.get("token") or data.get("auth_token")
-                                break
-                            elif "data" in data:
-                                # JSON:API format
-                                data_obj = data["data"]
-                                if "id" in data_obj and "attributes" in data_obj:
-                                    user_id = data_obj["id"]
-                                    attrs = data_obj["attributes"]
-                                    auth_token = attrs.get("token") or attrs.get("auth_token")
-                                    if auth_token:
-                                        break
-
-                        elif response.status_code != 404:
-                            logger.debug(f"Endpoint {endpoint}: {response.status_code}")
-
-                    if auth_token and user_id:
-                        break
-
-                except Exception as e:
-                    logger.debug(f"Failed to try {endpoint}: {e}")
-                    continue
-
-            if not auth_token or not user_id:
-                # If we can't find a login endpoint, we might need to manually set the token
-                # For now, let's try using the discovered pattern from DevTools
-                logger.warning("Could not find login endpoint. You may need to extract the auth token manually from DevTools.")
-                raise Exception("Authentication failed - no login endpoint found. Check DevTools for auth token.")
-
-            self.user_id = user_id
-            self.auth_token = auth_token
-            logger.info(f"Successfully authenticated with Skylight (user_id: {self.user_id})")
+            raise Exception("All authentication methods failed")
 
         except Exception as e:
             logger.error(f"Failed to authenticate with Skylight: {e}")
             raise
 
+    def _authenticate_direct(self) -> bool:
+        """
+        Try direct authentication using known working endpoint from CLAUDE.md research
+
+        Returns:
+            True if authentication succeeded, False otherwise
+        """
+        try:
+            url = f"{self.BASE_URL}/sessions"
+            payload = {
+                "user": {
+                    "email": self.email,
+                    "password": self.password
+                }
+            }
+
+            logger.debug("Trying direct authentication via /sessions endpoint")
+            response = self._session.post(url, json=payload, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                logger.debug(f"Direct login response: {data}")
+
+                # Look for user_id and token
+                if "user_id" in data and "user_token" in data:
+                    self.user_id = str(data["user_id"])
+                    self.auth_token = data["user_token"]
+                    return True
+                elif "user_id" in data and "token" in data:
+                    self.user_id = str(data["user_id"])
+                    self.auth_token = data["token"]
+                    return True
+
+            logger.debug(f"Direct authentication failed with status {response.status_code}")
+            return False
+
+        except Exception as e:
+            logger.debug(f"Direct authentication method failed: {e}")
+            return False
+
+    def _authenticate_fallback(self) -> bool:
+        """
+        Fallback authentication using multiple endpoints and payload formats
+
+        Returns:
+            True if authentication succeeded, False otherwise
+        """
+        # Common endpoints to try for login
+        login_endpoints = [
+            "/sessions",
+            "/auth/login",
+            "/login",
+            "/user/login",
+            "/authenticate"
+        ]
+
+        for endpoint in login_endpoints:
+            try:
+                url = f"{self.BASE_URL}{endpoint}"
+
+                # Try with various payload formats
+                payloads_to_try = [
+                    {"user": {"email": self.email, "password": self.password}},
+                    {"email": self.email, "password": self.password},
+                    {"username": self.email, "password": self.password}
+                ]
+
+                for test_payload in payloads_to_try:
+                    logger.debug(f"Trying {endpoint} with payload format")
+                    response = self._session.post(url, json=test_payload, timeout=10)
+
+                    if response.status_code == 200:
+                        data = response.json()
+
+                        # Look for user_id and token in various response formats
+                        if "user_id" in data and ("token" in data or "auth_token" in data or "user_token" in data):
+                            self.user_id = str(data["user_id"])
+                            self.auth_token = data.get("user_token") or data.get("token") or data.get("auth_token")
+                            return True
+                        elif "data" in data:
+                            # JSON:API format
+                            data_obj = data["data"]
+                            if "id" in data_obj and "attributes" in data_obj:
+                                self.user_id = data_obj["id"]
+                                attrs = data_obj["attributes"]
+                                self.auth_token = attrs.get("user_token") or attrs.get("token") or attrs.get("auth_token")
+                                if self.auth_token:
+                                    return True
+
+                    elif response.status_code != 404:
+                        logger.debug(f"Endpoint {endpoint}: {response.status_code}")
+
+            except Exception as e:
+                logger.debug(f"Failed to try {endpoint}: {e}")
+                continue
+
+        return False
+
+    def _cache_token(self) -> None:
+        """Cache authentication token to file to avoid repeated auth"""
+        try:
+            token_data = {
+                "user_id": self.user_id,
+                "auth_token": self.auth_token,
+                "email": self.email
+            }
+            with open(self.token_cache_file, "w") as f:
+                json.dump(token_data, f)
+            # Set restrictive permissions (owner only)
+            os.chmod(self.token_cache_file, 0o600)
+            logger.debug(f"Cached Skylight token to {self.token_cache_file}")
+        except Exception as e:
+            logger.warning(f"Failed to cache Skylight token: {e}")
+
+    def _load_cached_token(self) -> bool:
+        """
+        Load cached token if available
+
+        Returns:
+            True if token loaded successfully, False otherwise
+        """
+        try:
+            if not self.token_cache_file.exists():
+                return False
+
+            with open(self.token_cache_file, "r") as f:
+                token_data = json.load(f)
+
+            if token_data.get("email") != self.email:
+                logger.debug("Cached Skylight token is for different email")
+                return False
+
+            self.user_id = token_data.get("user_id")
+            self.auth_token = token_data.get("auth_token")
+
+            if self.user_id and self.auth_token:
+                logger.debug("Loaded cached Skylight token")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.debug(f"Failed to load cached Skylight token: {e}")
+            return False
+
     def _ensure_authenticated(self) -> None:
-        """Ensure client is authenticated"""
-        if not self.user_id or not hasattr(self, 'auth_token'):
-            self.authenticate()
+        """Ensure client is authenticated, trying cached token first"""
+        if self.user_id and self.auth_token:
+            return
+
+        # Try loading cached token first
+        if self._load_cached_token():
+            return
+
+        # Authenticate from scratch
+        self.authenticate()
 
     def _make_request(
         self,
@@ -167,6 +270,29 @@ class SkylightClient:
             return response.json()
 
         except requests.exceptions.HTTPError as e:
+            # Handle token expiration (401 Unauthorized)
+            if e.response.status_code == 401:
+                logger.warning("Skylight token expired, re-authenticating...")
+                # Clear current auth data
+                self.user_id = None
+                self.auth_token = None
+                # Remove cached token
+                if self.token_cache_file.exists():
+                    self.token_cache_file.unlink()
+
+                # Re-authenticate and retry once
+                self.authenticate()
+
+                # Update auth header with new token
+                auth_string = f"{self.user_id}:{self.auth_token}"
+                auth_header = base64.b64encode(auth_string.encode()).decode()
+                headers["Authorization"] = f"Basic {auth_header}"
+
+                # Retry request
+                response = self._session.request(method, url, json=data, headers=headers)
+                response.raise_for_status()
+                return response.json()
+
             logger.error(f"HTTP error {e.response.status_code}: {e}")
             if hasattr(e.response, 'text'):
                 logger.error(f"Response: {e.response.text}")
@@ -239,7 +365,7 @@ class SkylightClient:
                 return list_obj.get("id")
         return None
 
-    def get_grocery_list(self, list_name: str = "Test List") -> List[GroceryItem]:
+    def get_grocery_list(self, list_name: str) -> List[GroceryItem]:
         """
         Get all items from a specific grocery list (using discovered structure)
 
@@ -305,7 +431,7 @@ class SkylightClient:
             logger.error(f"Failed to get grocery list from Skylight: {e}")
             raise
 
-    def add_item(self, name: str, checked: bool = False, list_name: str = "Test List") -> str:
+    def add_item(self, name: str, checked: bool = False, list_name: str) -> str:
         """
         Add item to grocery list (using discovered JSON:API structure)
 

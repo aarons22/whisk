@@ -193,10 +193,31 @@ Automated bidirectional sync system for grocery lists between Paprika Recipe Man
 - ✅ Complete audit trail with operation logging
 - ✅ Foreign key relationships between systems
 
-### 🔄 **Phase 7: Production Hardening (PENDING)**
-- **Status**: Pending Phase 6 completion
+### 🔄 **Phase 7: Multiple List Syncing and CLI Redesign (PLANNING)**
+- **Status**: Planning in progress
+- **Goal**: Transform into "Whisk" - production CLI with multiple list support
+- **Duration**: Estimated 7-10 phases (major expansion)
+
+**Key Features:**
+- **Multiple List Syncing**: One-to-one list pairing (Paprika ↔ Skylight)
+- **Interactive Setup Wizard**: Complete elimination of manual config editing
+- **Professional CLI Interface**: `whisk setup`, `whisk sync`, `whisk start`
+- **Authentication Optimization**: Streamlined Skylight auth with token caching
+- **Configuration Simplification**: Hardcode technical settings, focus on user needs
+
+**Phases Breakdown:**
+- **Phase 7a**: Configuration System Redesign (2-3 days)
+- **Phase 7b**: Interactive Setup Wizard (3-4 days)
+- **Phase 7c**: Multiple List Sync Architecture (3-4 days)
+- **Phase 7d**: Authentication Optimization (2 days)
+- **Phase 7e**: CLI Implementation (4-5 days)
+- **Phase 7f**: Remove Hardcoded References (1 day)
+- **Phase 7g**: Package Restructuring as "Whisk" (1 day)
+
+### 🚀 **Phase 8: Production Hardening (FUTURE)**
+- **Status**: Future work after Phase 7 completion
 - **Goal**: Production deployment readiness
-- **Components**: Enhanced security, macOS LaunchAgent, comprehensive documentation
+- **Components**: Enhanced security, daemon management, comprehensive documentation
 
 ## 🏗️ Architecture
 
@@ -325,33 +346,35 @@ paprika-skylight/
 
 ## 🚀 Next Steps
 
-### **Phase 6 Tasks (Sync Engine Architecture Redesign)**
-1. **Redesign database schema** - separate tables for Paprika/Skylight items with proper relationships
-2. **Implement synthetic timestamps** - create reliable timestamps for Paprika items lacking API timestamps
-3. **Build item linking algorithm** - handle duplicate names with fuzzy matching and confidence scoring
-4. **Create configurable conflict resolution** - Paprika as source of truth with fallback strategies
-5. **Add comprehensive logging** - sync operation audit trail for debugging
-6. **Build test suite** - handle duplicate items and edge cases
+### **Phase 7: Multiple List Syncing and CLI Redesign (PLANNING)**
+Transform into "Whisk" - a professional CLI tool with multiple list support and interactive setup.
+
+**Sub-Phase Breakdown:**
+1. **Configuration System Redesign** - Support multiple list pairs with simplified schema
+2. **Interactive Setup Wizard** - Complete Q&A flow replacing manual config editing
+3. **Multiple List Sync Architecture** - Independent sync pairs with per-pair conflict resolution
+4. **Authentication Optimization** - Streamlined Skylight auth (15→1 endpoints) + token caching
+5. **CLI Implementation** - Professional interface: `whisk setup`, `whisk sync`, `whisk start/stop`
+6. **Remove Hardcoded References** - Eliminate all "Test List" defaults in codebase
+7. **Package Restructuring** - Rename to "Whisk" with proper CLI entry points
+
+**Key Benefits:**
+- **Multiple List Support** - Essential feature for power users
+- **User-Friendly Setup** - No manual YAML/env editing required
+- **50%+ Faster Startup** - Direct Skylight auth + token caching
+- **Professional CLI** - Standard interface with comprehensive help
+- **Simplified Configuration** - Technical settings hardcoded, focus on user needs
 
 ### **Current Status** 📋
-**Phase 5 is complete** and **major research breakthrough achieved**:
+**Phase 6 is complete** and **Phase 7 planning underway**:
 
-- ✅ **CLI and Scheduling**: Full daemon mode with configuration management works perfectly
+- ✅ **Sync Engine Architecture**: Comprehensive redesign complete with proper conflict resolution
 - ✅ **Individual API Clients**: Paprika and Skylight CRUD operations work reliably
-- ✅ **State Management**: Database and change detection logic functional
-- ✅ **Paprika Delete Mechanism**: **SOLVED** - uses full-sync operations, not individual DELETEs
-- ❌ **Core Sync Logic**: Requires redesign based on new understanding of Paprika architecture
+- ✅ **State Management**: New 3-table schema with intelligent item linking
+- ✅ **Conflict Resolution**: Multiple strategies with comprehensive test coverage
+- 📋 **Next**: Transform into multi-list CLI tool with interactive setup
 
-**Major Discovery**: Paprika deletion = GET all items (200KB+) → filter → POST complete array
-- 🧪 **Safe test protocol ready** with production data protection
-- 🛡️ **Ultra-safe testing prepared** but deferred pending implementation timing decision
-- 📋 **Complete restoration capability** available
-
-**Delete Behavior Decision**: **Asymmetric deletion accepted**
-- ✅ **Paprika → Skylight**: Complete deletion (sync operation enables true delete)
-- ⚠️ **Skylight → Paprika**: Soft delete only (marked as purchased due to API design)
-
-**Status**: **Research complete, ready for Phase 6 implementation when timing decided**
+**Status**: **Phase 6 complete, Phase 7 planning in progress - Major expansion to multi-list CLI**
 
 ## 🛡️ Risk Assessment
 
@@ -381,6 +404,6 @@ paprika-skylight/
 
 ---
 
-**Next Milestone**: Phase 7 - Production Hardening
-**Implementation Status**: Phase 6 in progress - Sync Engine Architecture Redesign
-**Success Criteria**: Reliable bidirectional sync with proper Paprika full-sync delete operations
+**Next Milestone**: Phase 7 - Multiple List Syncing and CLI Redesign (Whisk)
+**Implementation Status**: Phase 6 complete - Planning Phase 7 expansion
+**Success Criteria**: Professional CLI tool with multiple list syncing and interactive setup
