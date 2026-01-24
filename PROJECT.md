@@ -1,8 +1,8 @@
 # Paprika ↔ Skylight Grocery List Sync
 
-**Version**: Phase 5 Complete
+**Version**: Phase 5 Complete - Critical Architecture Issues Identified
 **Last Updated**: 2026-01-24
-**Status**: ✅ Scheduling and Configuration Complete, Ready for Phase 6
+**Status**: 🚨 Architecture Redesign Required - Phase 6 Redefined
 
 ## 📋 Project Overview
 
@@ -139,15 +139,52 @@ Automated bidirectional sync system for grocery lists between Paprika Recipe Man
 - ✅ Graceful shutdown with SIGTERM handling
 - ✅ Comprehensive test suite (8/8 tests passing)
 
-### 🔄 **Phase 6: Production Hardening (NEXT)**
-- **Status**: Ready to begin
-- **Goal**: Production-ready deployment with monitoring and reliability
-- **Components**:
-  - Enhanced credential security
-  - Rate limiting and API constraint handling
-  - macOS LaunchAgent for auto-start
-  - Comprehensive README.md documentation
-  - Production monitoring and alerting
+### 🚨 **CRITICAL DISCOVERY: Paprika Delete Mechanism Identified**
+
+**Real-world testing and Charles proxy analysis revealed fundamental misunderstanding:**
+
+#### **Paprika Delete Reality:**
+- ❌ **NOT individual DELETE API calls** - returns 404 (endpoint doesn't exist)
+- ✅ **Full grocery list sync operation** - POST complete updated array to `/api/v2/sync/groceries/`
+- ✅ **Heavy network operation** - every delete fetches ALL items (200KB+) and posts complete state
+- ✅ **All-or-nothing** - must preserve ALL other items exactly or risk production data loss
+
+**Process**: DELETE one item = GET all items (669 total) → filter out deleted item → POST complete array
+
+#### **Test Protocol Ready:**
+- 🛡️ **Ultra-safe test developed** with production data protection
+- 📁 **Complete backup system** with restoration capability
+- 🧪 **Test ready to execute** when implementation timing decided
+- 📋 **All test files prepared** and validated
+
+#### **Implementation Impact:**
+- 🔧 **Requires complete rewrite** of delete operations (Phase 6)
+- 📊 **Performance considerations** - caching and batching needed
+- 🎯 **Architecture validated** - sync endpoint approach confirmed viable
+
+**Research Status**: ✅ Complete | **Testing**: Ready but deferred | **Implementation**: Future phase TBD
+
+### 🔄 **Phase 6: Sync Engine Architecture Redesign (DEFERRED)**
+- **Status**: Research complete, implementation timing TBD
+- **Goal**: Rebuild sync logic with correct Paprika delete mechanism
+- **Key Finding**: **Asymmetric delete behavior accepted**
+
+**Delete Behavior Decision:**
+- ✅ **Paprika → Skylight**: Full deletion (sync operation → true delete)
+- ⚠️ **Skylight → Paprika**: Soft delete only (true delete impossible via API)
+
+**Accepted Limitation**: Skylight deletions will mark Paprika items as "purchased/checked" rather than removing them completely. This is due to Paprika's sync-only delete architecture and is **documented and accepted**.
+
+**Ready for Implementation**:
+- Complete test protocol prepared
+- Safe testing with production data protection
+- Full restoration capability available
+- Architecture redesign strategy defined
+
+### 🔄 **Phase 7: Production Hardening (MOVED)**
+- **Status**: Pending Phase 6 completion
+- **Goal**: Production deployment readiness
+- **Components**: Enhanced security, macOS LaunchAgent, comprehensive documentation
 
 ## 🏗️ Architecture
 
@@ -258,16 +295,25 @@ paprika-skylight/
 4. Write comprehensive README.md documentation
 5. Add production monitoring and error alerting
 
-### **Current Status** ✅
-The system is now **fully functional** with:
-- ✅ Complete bidirectional sync with conflict resolution
-- ✅ Scheduled execution with configurable intervals
-- ✅ CLI interface with dry-run, once, and daemon modes
-- ✅ Comprehensive error handling and retry logic
-- ✅ Production-ready configuration management
-- ✅ Full test coverage across all components
+### **Current Status** 📋
+**Phase 5 is complete** and **major research breakthrough achieved**:
 
-**Ready for Production Use**: The sync system can now be deployed and will reliably keep grocery lists synchronized between Paprika and Skylight.
+- ✅ **CLI and Scheduling**: Full daemon mode with configuration management works perfectly
+- ✅ **Individual API Clients**: Paprika and Skylight CRUD operations work reliably
+- ✅ **State Management**: Database and change detection logic functional
+- ✅ **Paprika Delete Mechanism**: **SOLVED** - uses full-sync operations, not individual DELETEs
+- ❌ **Core Sync Logic**: Requires redesign based on new understanding of Paprika architecture
+
+**Major Discovery**: Paprika deletion = GET all items (200KB+) → filter → POST complete array
+- 🧪 **Safe test protocol ready** with production data protection
+- 🛡️ **Ultra-safe testing prepared** but deferred pending implementation timing decision
+- 📋 **Complete restoration capability** available
+
+**Delete Behavior Decision**: **Asymmetric deletion accepted**
+- ✅ **Paprika → Skylight**: Complete deletion (sync operation enables true delete)
+- ⚠️ **Skylight → Paprika**: Soft delete only (marked as purchased due to API design)
+
+**Status**: **Research complete, ready for Phase 6 implementation when timing decided**
 
 ## 🛡️ Risk Assessment
 
@@ -282,9 +328,12 @@ The system is now **fully functional** with:
 - Production deployment considerations
 
 ### **High Priority TODOs** 🚨
-- **Production Documentation**: Complete README.md for deployment
-- **macOS LaunchAgent**: Auto-start configuration for Mac mini deployment
-- **Rate Limiting**: Conservative API usage patterns for long-term stability
+- **Phase 6 Architecture Redesign** - Sync logic requires fundamental rewrite based on research findings
+  - Paprika deletion uses full-sync operations (not individual DELETEs)
+  - Must implement complete state management for 200KB+ grocery arrays
+  - Architecture redesign strategy defined but implementation deferred (timing TBD)
+- **Delete Asymmetry Accepted** - Skylight→Paprika deletions will soft delete (mark as purchased) due to API constraints
+- **Ready for Implementation** - Ultra-safe test protocol prepared with production data protection
 
 ### **Mitigation Strategies**
 - Conservative API usage patterns
@@ -294,6 +343,8 @@ The system is now **fully functional** with:
 
 ---
 
-**Next Milestone**: Phase 6 - Production Hardening
-**Estimated Effort**: 1 development session
-**Success Criteria**: Ready for unattended deployment on Mac mini with comprehensive documentation
+**Next Milestone**: Phase 6 - Sync Engine Architecture Redesign
+**Implementation Timing**: TBD - Research complete, ready when decided
+**Success Criteria**: Reliable bidirectional sync with proper Paprika full-sync delete operations
+
+**Current Decision**: Architecture redesign deferred pending timing decision. Delete behavior asymmetry accepted as documented limitation.
