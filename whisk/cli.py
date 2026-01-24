@@ -293,23 +293,22 @@ def cmd_lists(args) -> int:
 
                 for i, status in enumerate(pair_statuses, 1):
                     enabled_icon = "✅" if status['enabled'] else "❌"
-                    strategy = status['conflict_strategy']
 
                     if status.get('status') == 'ready':
                         paprika_count = status.get('paprika_count', '?')
                         skylight_count = status.get('skylight_count', '?')
                         print(f"  {i}. {enabled_icon} {status['paprika_list']} ({paprika_count} items) ↔ "
-                              f"{status['skylight_list']} ({skylight_count} items) [{strategy}]")
+                              f"{status['skylight_list']} ({skylight_count} items)")
                     else:
                         print(f"  {i}. {enabled_icon} {status['paprika_list']} ↔ {status['skylight_list']} "
-                              f"[{strategy}] - {status.get('status', 'unknown')}")
+                              f"- {status.get('status', 'unknown')}")
 
             except Exception as e:
                 # Fall back to basic display
                 logger.debug(f"Could not get pair status: {e}")
                 for i, pair in enumerate(config.list_pairs, 1):
                     status = "✅" if pair.enabled else "❌"
-                    print(f"  {i}. {status} {pair.paprika_list} ↔ {pair.skylight_list} ({pair.conflict_strategy})")
+                    print(f"  {i}. {status} {pair.paprika_list} ↔ {pair.skylight_list}")
 
             return 0
 
@@ -331,7 +330,6 @@ def cmd_config(args) -> int:
             config = config_manager.load_config()
             print("⚙️ Current Whisk Configuration:")
             print(f"  Sync interval: {config.sync_interval_seconds} seconds")
-            print(f"  Global conflict strategy: {config.global_conflict_strategy}")
             print(f"  List pairs: {len(config.list_pairs)}")
 
             for i, pair in enumerate(config.list_pairs, 1):

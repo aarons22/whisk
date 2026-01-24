@@ -78,7 +78,6 @@ class SetupWizard:
         config = WhiskConfig(
             list_pairs=list_pairs,
             sync_interval_seconds=sync_config['interval'],
-            global_conflict_strategy="newest_wins",  # Use default strategy
             **paprika_creds,
             **skylight_creds
         )
@@ -310,7 +309,6 @@ class SetupWizard:
             pair = ListPairConfig(
                 paprika_list=paprika_list,
                 skylight_list=skylight_list,
-                conflict_strategy="newest_wins",  # Always use default
                 enabled=True
             )
             pairs.append(pair)

@@ -205,7 +205,6 @@ class WhiskSyncEngine:
             pair = ListPairConfig(
                 paprika_list=paprika_list,
                 skylight_list=skylight_list,
-                conflict_strategy="newest_wins",
                 enabled=True
             )
 
@@ -241,8 +240,6 @@ class WhiskSyncEngine:
 
             # Create conflict resolver config for this pair
             resolver_config = create_conflict_resolver_config(
-                strategy=pair.conflict_strategy,
-                paprika_always_wins=pair.conflict_strategy == "paprika_wins",
                 timestamp_tolerance_seconds=self.config.timestamp_tolerance_seconds
             )
 
@@ -262,6 +259,11 @@ class WhiskSyncEngine:
                 skylight_client=self.skylight_client,
                 config=resolver_config
             )
+
+            # CRITICAL: Capture pre-sync states BEFORE any API calls or database updates
+            if not dry_run:
+                logger.debug("Capturing pre-sync states for change detection...")
+                conflict_resolver.capture_pre_sync_states()
 
             # Get current items from both services
             logger.debug(f"Fetching items from {pair.paprika_list} (Paprika)")
@@ -326,7 +328,6 @@ class WhiskSyncEngine:
                     'paprika_list': pair.paprika_list,
                     'skylight_list': pair.skylight_list,
                     'enabled': pair.enabled,
-                    'conflict_strategy': pair.conflict_strategy,
                     'paprika_count': len(paprika_items),
                     'skylight_count': len(skylight_items),
                     'status': 'ready' if pair.enabled else 'disabled'
@@ -337,7 +338,6 @@ class WhiskSyncEngine:
                     'paprika_list': pair.paprika_list,
                     'skylight_list': pair.skylight_list,
                     'enabled': pair.enabled,
-                    'conflict_strategy': pair.conflict_strategy,
                     'status': 'error',
                     'error': str(e)
                 }

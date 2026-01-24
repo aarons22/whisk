@@ -18,10 +18,6 @@ database:
 
 # Phase 6 Sync Configuration
 sync:
-  # Conflict resolution strategy: "paprika_wins", "skylight_wins", "newest_wins"
-  conflict_strategy: "newest_wins"
-  # Whether Paprika always wins tie-breakers (when timestamps are equal/missing)
-  paprika_always_wins: true
   # Timestamp tolerance for "newest wins" strategy (seconds)
   timestamp_tolerance_seconds: 60
 

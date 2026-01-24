@@ -67,8 +67,6 @@ class SyncEngine:
         self.item_linker = ItemLinker(self.state, linker_config)
 
         resolver_config = create_conflict_resolver_config(
-            strategy=self.config.get('conflict_strategy', 'paprika_wins'),
-            paprika_always_wins=self.config.get('paprika_always_wins', True),
             timestamp_tolerance_seconds=self.config.get('timestamp_tolerance', 60),
             dry_run=False  # Will be set per sync call
         )

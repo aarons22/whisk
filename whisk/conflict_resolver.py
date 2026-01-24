@@ -1,24 +1,15 @@
-"""Configurable conflict resolution system for Paprika ↔ Skylight sync"""
+"""Conflict resolution system for Paprika ↔ Skylight sync using newest wins strategy"""
 
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timezone
 from dataclasses import dataclass
-from enum import Enum
 
 from .state_manager import StateManager, ItemLink
 from .paprika_client import PaprikaClient
 from .skylight_client import SkylightClient
 
 logger = logging.getLogger(__name__)
-
-
-class ConflictStrategy(Enum):
-    """Available conflict resolution strategies"""
-    PAPRIKA_WINS = "paprika_wins"
-    SKYLIGHT_WINS = "skylight_wins"
-    NEWEST_WINS = "newest_wins"
-    PROMPT_USER = "prompt_user"
 
 
 @dataclass
@@ -52,23 +43,21 @@ class ConflictResolver:
             state_manager: StateManager instance
             paprika_client: PaprikaClient for applying changes
             skylight_client: SkylightClient for applying changes
-            config: Configuration options
+            config: Configuration options (for compatibility, mostly unused now)
         """
         self.state = state_manager
         self.paprika = paprika_client
         self.skylight = skylight_client
         self.config = config or {}
 
-        # Default configuration
-        self.strategy = ConflictStrategy(self.config.get('strategy', 'paprika_wins'))
-        self.paprika_always_wins = self.config.get('paprika_always_wins', True)
+        # Configuration options
         self.timestamp_tolerance_seconds = self.config.get('timestamp_tolerance_seconds', 60)
         self.dry_run = self.config.get('dry_run', False)
 
         # Store pre-sync state for change detection
         self._pre_sync_states = {}
 
-        logger.info(f"ConflictResolver initialized with strategy: {self.strategy.value}")
+        logger.info("ConflictResolver initialized with newest wins strategy")
 
     def capture_pre_sync_states(self) -> None:
         """Capture the current database states before sync starts for change detection"""
@@ -82,6 +71,7 @@ class ConflictResolver:
                 JOIN skylight_items s ON l.skylight_item_id = s.id
             """)
 
+            captured_count = 0
             for row in cursor.fetchall():
                 key = (row['paprika_id'], row['skylight_id'])
                 self._pre_sync_states[key] = {
@@ -89,8 +79,15 @@ class ConflictResolver:
                     'skylight_checked': bool(row['skylight_checked']),
                     'name': row['name']
                 }
+                captured_count += 1
 
-            logger.debug(f"Captured pre-sync states for {len(self._pre_sync_states)} items")
+            logger.info(f"📸 Captured pre-sync states for {captured_count} linked items")
+            if captured_count > 0:
+                # Show a sample for debugging
+                sample_items = list(self._pre_sync_states.items())[:3]
+                for key, state in sample_items:
+                    logger.debug(f"  Sample: {state['name']} - P:{state['paprika_checked']}, S:{state['skylight_checked']}")
+
         except Exception as e:
             logger.error(f"Failed to capture pre-sync states: {e}")
             self._pre_sync_states = {}
@@ -113,6 +110,12 @@ class ConflictResolver:
         conflicts = self.state.get_linked_items_with_conflicts()
         logger.info(f"Found {len(conflicts)} conflicts to resolve")
 
+        # DEBUG: Log details about each conflict
+        for i, conflict in enumerate(conflicts):
+            p_item = conflict.paprika_item
+            s_item = conflict.skylight_item
+            logger.info(f"  Conflict {i+1}: '{p_item.name}' - Paprika={p_item.checked}, Skylight={s_item.checked}")
+
         if not conflicts:
             return []
 
@@ -133,11 +136,11 @@ class ConflictResolver:
                            f"action: {resolution.action_taken}"
                 )
 
-                logger.info(f"Resolved conflict for '{resolution.item_name}': "
+                logger.info(f"✅ Resolved conflict for '{resolution.item_name}': "
                            f"{resolution.winner} wins ({resolution.action_taken})")
 
             except Exception as e:
-                logger.error(f"Failed to resolve conflict for item {conflict.paprika_item.name}: {e}")
+                logger.error(f"❌ Failed to resolve conflict for item {conflict.paprika_item.name}: {e}")
                 # Continue with other conflicts
 
         logger.info(f"Successfully resolved {len(resolutions)}/{len(conflicts)} conflicts")
@@ -188,7 +191,7 @@ class ConflictResolver:
 
     def _determine_winner(self, p_item, s_item) -> Tuple[str, str, float]:
         """
-        Determine conflict winner based on strategy
+        Determine conflict winner using newest wins strategy
 
         Args:
             p_item: Paprika item
@@ -197,24 +200,7 @@ class ConflictResolver:
         Returns:
             Tuple of (winner, action_description, confidence)
         """
-        if self.strategy == ConflictStrategy.PAPRIKA_WINS:
-            return "Paprika", f"Update Skylight to {p_item.checked}", 1.0
-
-        elif self.strategy == ConflictStrategy.SKYLIGHT_WINS:
-            return "Skylight", f"Update Paprika to {s_item.checked}", 1.0
-
-        elif self.strategy == ConflictStrategy.NEWEST_WINS:
-            return self._resolve_by_timestamp(p_item, s_item)
-
-        elif self.strategy == ConflictStrategy.PROMPT_USER:
-            # For now, fall back to Paprika wins
-            # In a real implementation, this would prompt the user
-            logger.warning("User prompt not implemented, falling back to Paprika wins")
-            return "Paprika (fallback)", f"Update Skylight to {p_item.checked}", 0.8
-
-        else:
-            # Default fallback
-            return "Paprika (default)", f"Update Skylight to {p_item.checked}", 0.7
+        return self._resolve_by_timestamp(p_item, s_item)
 
     def _resolve_by_timestamp(self, p_item, s_item) -> Tuple[str, str, float]:
         """
@@ -245,11 +231,9 @@ class ConflictResolver:
 
         # Fallback to timestamp-based resolution if we can't detect change source
         if not p_timestamp and not s_timestamp:
-            # No timestamps available - fallback based on config
-            if self.paprika_always_wins:
-                return "Paprika (no timestamps)", f"Update Skylight to {p_item.checked}", 0.6
-            else:
-                return "Skylight (no timestamps)", f"Update Paprika to {s_item.checked}", 0.6
+            # No timestamps available - favor Skylight since it has real user interaction timestamps
+            # and is more likely to reflect recent user actions
+            return "Skylight (no timestamps)", f"Update Paprika to {s_item.checked}", 0.6
 
         elif not s_timestamp:
             # Only Paprika has timestamp
@@ -269,8 +253,10 @@ class ConflictResolver:
                         f"diff={time_diff:.1f}s")
 
             if abs(time_diff) <= self.timestamp_tolerance_seconds:
-                # Timestamps are very close - use Paprika as tiebreaker
-                return "Paprika (tie)", f"Update Skylight to {p_item.checked}", 0.7
+                # Timestamps are very close - favor the change detection over timestamp comparison
+                # If we can't detect change source but timestamps are close, favor Skylight
+                # since it's more likely to reflect actual user interaction
+                return "Skylight (tie)", f"Update Paprika to {s_item.checked}", 0.7
 
             elif time_diff > 0:
                 # Paprika is newer
@@ -296,8 +282,11 @@ class ConflictResolver:
             key = (p_item.paprika_id, s_item.skylight_id)
             pre_sync_state = self._pre_sync_states.get(key)
 
+            logger.debug(f"🔍 Change detection for '{p_item.name}': key={key}, has_state={pre_sync_state is not None}")
+
             if not pre_sync_state:
                 logger.debug(f"No pre-sync state found for {p_item.name} (key: {key})")
+                logger.debug(f"Available keys: {list(self._pre_sync_states.keys())[:5]}...")  # Show first 5
                 return None
 
             # Get the states before sync started
@@ -312,21 +301,23 @@ class ConflictResolver:
             paprika_changed = (last_paprika_checked != current_paprika_checked)
             skylight_changed = (last_skylight_checked != current_skylight_checked)
 
-            logger.debug(f"Change detection for '{p_item.name}': "
+            logger.info(f"🔍 Change detection for '{p_item.name}': "
                        f"Paprika {last_paprika_checked}→{current_paprika_checked} (changed={paprika_changed}), "
                        f"Skylight {last_skylight_checked}→{current_skylight_checked} (changed={skylight_changed})")
 
             if skylight_changed and not paprika_changed:
+                logger.info(f"🎯 SKYLIGHT CHANGED: '{p_item.name}' - Skylight should win!")
                 return ("skylight", 0.95)  # High confidence - only Skylight changed
             elif paprika_changed and not skylight_changed:
+                logger.info(f"🎯 PAPRIKA CHANGED: '{p_item.name}' - Paprika should win!")
                 return ("paprika", 0.95)   # High confidence - only Paprika changed
             elif paprika_changed and skylight_changed:
                 # Both changed - can't determine source, fall back to timestamps
-                logger.debug(f"Both systems changed for '{p_item.name}', falling back to timestamps")
+                logger.info(f"🤔 Both systems changed for '{p_item.name}', falling back to timestamps")
                 return None
             else:
                 # Neither changed according to our records - this shouldn't happen in a conflict
-                logger.warning(f"Conflict detected but no changes found for '{p_item.name}'")
+                logger.warning(f"⚠️ Conflict detected but no changes found for '{p_item.name}' - this is unexpected!")
                 return None
 
         except Exception as e:
@@ -357,7 +348,7 @@ class ConflictResolver:
 
             elif winner.startswith("Skylight"):
                 # Skylight wins - update Paprika
-                self.paprika.update_item(p_item.paprika_id, s_item.checked)
+                self.paprika.update_item(p_item.paprika_id, s_item.checked, list_name=paprika_list_name)
                 logger.debug(f"Updated Paprika item {p_item.name} to checked={s_item.checked}")
 
                 # IMPORTANT: Update our database record for Paprika to reflect the change
@@ -440,7 +431,7 @@ class ConflictResolver:
                 'total_conflicts': len(conflicts),
                 'paprika_checked_conflicts': paprika_true_conflicts,
                 'skylight_checked_conflicts': skylight_true_conflicts,
-                'strategy': self.strategy.value,
+                'strategy': 'newest_wins',
                 'dry_run': self.dry_run,
                 'conflict_details': conflict_details
             }
@@ -448,17 +439,6 @@ class ConflictResolver:
         except Exception as e:
             logger.error(f"Failed to get conflict summary: {e}")
             return {'error': str(e)}
-
-    def set_strategy(self, strategy: ConflictStrategy) -> None:
-        """
-        Change the conflict resolution strategy
-
-        Args:
-            strategy: New strategy to use
-        """
-        old_strategy = self.strategy
-        self.strategy = strategy
-        logger.info(f"Changed conflict resolution strategy from {old_strategy.value} to {strategy.value}")
 
     def set_dry_run(self, dry_run: bool) -> None:
         """
@@ -469,11 +449,10 @@ class ConflictResolver:
         """
         self.dry_run = dry_run
         logger.info(f"Set dry-run mode to {dry_run}")
+        logger.info(f"Set dry-run mode to {dry_run}")
 
 # Utility function for configuration
 def create_conflict_resolver_config(
-    strategy: str = "paprika_wins",
-    paprika_always_wins: bool = True,
     timestamp_tolerance_seconds: int = 60,
     dry_run: bool = False
 ) -> dict:
@@ -481,17 +460,13 @@ def create_conflict_resolver_config(
     Create a configuration dictionary for ConflictResolver
 
     Args:
-        strategy: Conflict resolution strategy
-        paprika_always_wins: Whether Paprika wins ties
-        timestamp_tolerance_seconds: Time difference tolerance for "newest wins"
+        timestamp_tolerance_seconds: Time difference tolerance for newest wins
         dry_run: Whether to simulate changes only
 
     Returns:
         Configuration dictionary
     """
     return {
-        'strategy': strategy,
-        'paprika_always_wins': paprika_always_wins,
         'timestamp_tolerance_seconds': timestamp_tolerance_seconds,
         'dry_run': dry_run
     }
