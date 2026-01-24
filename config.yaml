@@ -14,7 +14,7 @@ skylight:
   list_name: "Test List"
 
 database:
-  path: "sync_state.db"
+  path: "sync_state.db"  # SQLite database for state tracking
 
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR

@@ -32,6 +32,7 @@ env/
 # Sync state and cache
 sync_state.db
 sync_state.db-journal
+demo_state.db  # Demo database files
 .paprika_token
 
 # Logs
