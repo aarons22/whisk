@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
-from .models import GroceryItem
+from .models import ListItem
 from .paprika_client import PaprikaClient
 from .skylight_client import SkylightClient
 from .state_manager import StateManager
@@ -99,7 +99,7 @@ class SyncEngine:
             # Phase 1: Data Collection with Synthetic Timestamps
             logger.info("Phase 1: Collecting data from both systems...")
             paprika_items = self.paprika.get_grocery_list(self.paprika_list_name)
-            skylight_items = self.skylight.get_grocery_list(self.skylight_list_name)
+            skylight_items = self.skylight.get_list_items(self.skylight_list_name)
 
             logger.info(f"Retrieved: {len(paprika_items)} Paprika items, {len(skylight_items)} Skylight items")
 
@@ -222,7 +222,7 @@ class SyncEngine:
                     skylight_id = self.skylight.add_item(p_item.name, p_item.checked, self.skylight_list_name)
 
                     # Create Skylight database entry
-                    skylight_item = GroceryItem(
+                    skylight_item = ListItem(
                         name=p_item.name,
                         checked=p_item.checked,
                         skylight_id=skylight_id,
@@ -250,7 +250,7 @@ class SyncEngine:
                     paprika_id = self.paprika.add_item(s_item.name, s_item.checked, self.paprika_list_name)
 
                     # Create Paprika database entry
-                    paprika_item = GroceryItem(
+                    paprika_item = ListItem(
                         name=s_item.name,
                         checked=s_item.checked,
                         paprika_id=paprika_id

@@ -1,4 +1,4 @@
-"""State management for grocery list sync using SQLite - Version 2 Architecture
+"""State management for list sync using SQLite - Version 2 Architecture
 
 This version implements the redesigned 3-table schema to handle:
 - Duplicate item names properly
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple, NamedTuple
 from dataclasses import dataclass
 
-from .models import GroceryItem
+from .models import ListItem
 
 logger = logging.getLogger(__name__)
 
@@ -214,12 +214,12 @@ class StateManager:
         self.close()
 
     # Paprika Items Operations
-    def upsert_paprika_item(self, item: GroceryItem, list_uid: str) -> PaprikaItem:
+    def upsert_paprika_item(self, item: ListItem, list_uid: str) -> PaprikaItem:
         """
         Insert or update Paprika item with synthetic timestamp management
 
         Args:
-            item: GroceryItem from Paprika API
+            item: ListItem from Paprika API
             list_uid: Paprika list UID
 
         Returns:
@@ -312,12 +312,12 @@ class StateManager:
             logger.error(f"Failed to upsert Paprika item: {e}")
             raise
 
-    def upsert_skylight_item(self, item: GroceryItem, list_id: str) -> SkylightItem:
+    def upsert_skylight_item(self, item: ListItem, list_id: str) -> SkylightItem:
         """
         Insert or update Skylight item with real API timestamps
 
         Args:
-            item: GroceryItem from Skylight API
+            item: ListItem from Skylight API
             list_id: Skylight list ID
 
         Returns:

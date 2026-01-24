@@ -10,13 +10,13 @@ from typing import List, Optional, Dict, Any
 
 import requests
 
-from .models import GroceryItem
+from .models import ListItem
 
 logger = logging.getLogger(__name__)
 
 
 class SkylightClient:
-    """Client for interacting with Skylight grocery lists with optimized authentication"""
+    """Client for interacting with Skylight API with optimized authentication"""
 
     BASE_URL = "https://app.ourskylight.com/api"
 
@@ -329,7 +329,7 @@ class SkylightClient:
         Get all lists for the configured frame (discovered endpoint structure)
 
         Returns:
-            List of grocery list dictionaries from JSON:API format
+            List of skylight list dictionaries from JSON:API format
         """
         if self._lists_cache is None:
             try:
@@ -365,18 +365,18 @@ class SkylightClient:
                 return list_obj.get("id")
         return None
 
-    def get_grocery_list(self, list_name: str) -> List[GroceryItem]:
+    def get_list_items(self, list_name: str) -> List[ListItem]:
         """
-        Get all items from a specific grocery list (using discovered structure)
+        Get all items from a specific list (using discovered structure)
 
         Args:
-            list_name: Name of the grocery list
+            list_name: Name of the list
 
         Returns:
-            List of GroceryItem objects from the specified list
+            List of ListItem objects from the specified list
         """
         try:
-            logger.debug(f"Fetching grocery items from Skylight list: {list_name}")
+            logger.debug(f"Fetching items from Skylight list: {list_name}")
 
             # Get the list ID
             list_id = self.get_list_id_by_name(list_name)
@@ -416,7 +416,7 @@ class SkylightClient:
                     status = attributes.get("status", "pending")
                     checked = (status == "completed")
 
-                    item = GroceryItem(
+                    item = ListItem(
                         name=attributes.get("label", ""),  # Note: uses "label" not "name"
                         checked=checked,
                         skylight_id=str(attributes.get("id")),  # Convert to string
@@ -428,17 +428,17 @@ class SkylightClient:
             return items
 
         except Exception as e:
-            logger.error(f"Failed to get grocery list from Skylight: {e}")
+            logger.error(f"Failed to get list items from Skylight: {e}")
             raise
 
     def add_item(self, name: str, list_name: str, checked: bool = False) -> str:
         """
-        Add item to grocery list (using discovered JSON:API structure)
+        Add item to list (using discovered JSON:API structure)
 
         Args:
             name: Item name
             checked: Whether item is checked
-            list_name: Name of the grocery list to add to
+            list_name: Name of the list to add to
 
         Returns:
             Skylight ID of created item
@@ -531,7 +531,7 @@ class SkylightClient:
                 raise Exception(f"List '{list_name}' not found")
 
             # Verify item exists in this specific list
-            items = self.get_grocery_list(list_name)
+            items = self.get_list_items(list_name)
             item_found = any(item.skylight_id == skylight_id for item in items)
             if not item_found:
                 raise Exception(f"Item {skylight_id} not found in list '{list_name}'")
@@ -569,7 +569,7 @@ class SkylightClient:
 
     def remove_item(self, skylight_id: str, list_name: str = None) -> None:
         """
-        Remove item from grocery list
+        Remove item from list
 
         Args:
             skylight_id: Skylight ID of the item to remove
@@ -590,7 +590,7 @@ class SkylightClient:
                     raise Exception(f"List '{list_name}' not found")
 
                 # Check if item exists in this specific list
-                items = self.get_grocery_list(list_name)
+                items = self.get_list_items(list_name)
                 if any(item.skylight_id == skylight_id for item in items):
                     list_id = target_list_id
                     logger.debug(f"Found item {skylight_id} in target list '{list_name}'")

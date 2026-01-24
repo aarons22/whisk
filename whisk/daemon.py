@@ -23,16 +23,18 @@ logger = logging.getLogger(__name__)
 class DaemonManager:
     """Manages Whisk sync daemon lifecycle"""
 
-    def __init__(self, config: WhiskConfig, pid_file: str = ".whisk.pid"):
+    def __init__(self, config: Optional[WhiskConfig], config_dir: Optional[Path], pid_file: str = ".whisk.pid"):
         """
         Initialize daemon manager
 
         Args:
-            config: Whisk configuration
+            config: Whisk configuration (optional for stop/status operations)
+            config_dir: Directory for PID file and other resources
             pid_file: Path to PID file
         """
         self.config = config
-        self.pid_file = Path(pid_file)
+        self.config_dir = config_dir or Path.cwd()
+        self.pid_file = self.config_dir / pid_file
         self.sync_engine = None
 
     def is_running(self) -> bool:
@@ -242,6 +244,15 @@ class DaemonManager:
 
     def _daemon_loop(self) -> None:
         """Main daemon loop - perform scheduled syncs"""
+        if not self.config:
+            logger.error("Cannot run daemon without configuration")
+            return
+
+        from .multi_sync_engine import WhiskSyncEngine
+
+        # Initialize sync engine
+        self.sync_engine = WhiskSyncEngine(self.config, self.config_dir)
+
         sync_interval = self.config.sync_interval_seconds
         logger.info(f"Starting sync loop with {sync_interval}s intervals")
 
@@ -249,9 +260,16 @@ class DaemonManager:
             try:
                 logger.debug("Performing scheduled sync...")
 
-                # TODO: Implement actual sync logic (Task #3)
-                # For now, just log that we're running
-                logger.info("Sync cycle completed (placeholder)")
+                # Perform sync of all enabled pairs
+                result = self.sync_engine.sync_all_pairs(dry_run=False)
+
+                if result.success:
+                    logger.info(f"✅ Scheduled sync completed: {result.successful_pairs}/{result.total_pairs} pairs, "
+                               f"{result.total_changes} changes, {result.total_conflicts_resolved} conflicts resolved")
+                else:
+                    logger.warning(f"⚠️ Scheduled sync had errors: {result.failed_pairs}/{result.total_pairs} pairs failed")
+                    for error in result.errors[:3]:  # Log first 3 errors
+                        logger.warning(f"   {error}")
 
                 # Sleep until next sync
                 time.sleep(sync_interval)

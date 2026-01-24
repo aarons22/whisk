@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 
 import requests
 
-from .models import GroceryItem
+from .models import ListItem
 
 logger = logging.getLogger(__name__)
 
@@ -248,15 +248,15 @@ class PaprikaClient:
                 return grocery_list.get("uid")
         return None
 
-    def get_grocery_list(self, list_name: str) -> List[GroceryItem]:
+    def get_grocery_list(self, list_name: str) -> List[ListItem]:
         """
-        Get all items from a specific grocery list
+        Get all items from a specific list
 
         Args:
-            list_name: Name of the grocery list to filter by
+            list_name: Name of the list to filter by
 
         Returns:
-            List of GroceryItem objects from the specified list
+            List of ListItem objects from the specified list
         """
         try:
             logger.debug(f"Fetching grocery items from Paprika list: {list_name}")
@@ -288,7 +288,7 @@ class PaprikaClient:
                             f"Failed to parse timestamp for {grocery.get('name')}: {e}"
                         )
 
-                item = GroceryItem(
+                item = ListItem(
                     name=grocery.get("name", ""),
                     checked=grocery.get("purchased", False),
                     paprika_id=grocery.get("uid"),

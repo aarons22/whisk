@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path.cwd() / 'src'))
 from state_manager_v2 import StateManagerV2
 from item_linker import ItemLinker
 from conflict_resolver import ConflictResolver, create_conflict_resolver_config
-from models import GroceryItem
+from whisk.models import ListItem
 from datetime import datetime, timezone, timedelta
 import tempfile
 import os
@@ -75,62 +75,61 @@ def test_complete_sync_architecture():
         # Paprika items - representing real-world messiness
         paprika_items = [
             # Exact matches with different checked states
-            GroceryItem(name="milk", checked=False, paprika_id="P-MILK-1"),
-            GroceryItem(name="bread", checked=True, paprika_id="P-BREAD-1"),
+            ListItem(name="milk", checked=False, paprika_id="P-MILK-1"),
+            ListItem(name="bread", checked=True, paprika_id="P-BREAD-1"),
 
             # Duplicate names (very common in real usage)
-            GroceryItem(name="eggs", checked=False, paprika_id="P-EGGS-1"),
-            GroceryItem(name="eggs", checked=True, paprika_id="P-EGGS-2"),
-            GroceryItem(name="apples", checked=False, paprika_id="P-APPLES-1"),
-            GroceryItem(name="apples", checked=False, paprika_id="P-APPLES-2"),
-            GroceryItem(name="apples", checked=True, paprika_id="P-APPLES-3"),
+            ListItem(name="eggs", checked=False, paprika_id="P-EGGS-1"),
+            ListItem(name="eggs", checked=True, paprika_id="P-EGGS-2"),
+            ListItem(name="apples", checked=False, paprika_id="P-APPLES-1"),
+            ListItem(name="apples", checked=False, paprika_id="P-APPLES-2"),
+            ListItem(name="apples", checked=True, paprika_id="P-APPLES-3"),
 
             # Case sensitivity issues
-            GroceryItem(name="Peanut Butter", checked=False, paprika_id="P-PB-1"),
-            GroceryItem(name="OLIVE OIL", checked=True, paprika_id="P-OIL-1"),
-
+            ListItem(name="Peanut Butter", checked=False, paprika_id="P-PB-1"),
+            ListItem(name="OLIVE OIL", checked=True, paprika_id="P-OIL-1"),
             # Fuzzy matching candidates
-            GroceryItem(name="greek yogurt", checked=False, paprika_id="P-YOGURT-1"),
-            GroceryItem(name="whole wheat bread", checked=True, paprika_id="P-WWB-1"),
+            ListItem(name="greek yogurt", checked=False, paprika_id="P-YOGURT-1"),
+            ListItem(name="whole wheat bread", checked=True, paprika_id="P-WWB-1"),
 
             # Items that will have no match
-            GroceryItem(name="paprika exclusive item", checked=False, paprika_id="P-EXCLUSIVE-1"),
+            ListItem(name="paprika exclusive item", checked=False, paprika_id="P-EXCLUSIVE-1"),
         ]
 
         # Skylight items - creating various matching scenarios
         skylight_items = [
             # Exact matches with conflicts
-            GroceryItem(name="milk", checked=True, skylight_id="S-MILK-1",
+            ListItem(name="milk", checked=True, skylight_id="S-MILK-1",
                        skylight_timestamp=now - timedelta(minutes=30)),
-            GroceryItem(name="bread", checked=False, skylight_id="S-BREAD-1",
+            ListItem(name="bread", checked=False, skylight_id="S-BREAD-1",
                        skylight_timestamp=now - timedelta(hours=1)),
 
             # Duplicate names with different timestamps
-            GroceryItem(name="eggs", checked=True, skylight_id="S-EGGS-1",
+            ListItem(name="eggs", checked=True, skylight_id="S-EGGS-1",
                        skylight_timestamp=now),  # Newest
-            GroceryItem(name="eggs", checked=False, skylight_id="S-EGGS-2",
+            ListItem(name="eggs", checked=False, skylight_id="S-EGGS-2",
                        skylight_timestamp=now - timedelta(hours=2)),  # Oldest
-            GroceryItem(name="apples", checked=True, skylight_id="S-APPLES-1",
+            ListItem(name="apples", checked=True, skylight_id="S-APPLES-1",
                        skylight_timestamp=now - timedelta(minutes=15)),
-            GroceryItem(name="apples", checked=False, skylight_id="S-APPLES-2",
+            ListItem(name="apples", checked=False, skylight_id="S-APPLES-2",
                        skylight_timestamp=now - timedelta(minutes=45)),
 
             # Case differences
-            GroceryItem(name="peanut butter", checked=True, skylight_id="S-PB-1",
+            ListItem(name="peanut butter", checked=True, skylight_id="S-PB-1",
                        skylight_timestamp=now - timedelta(minutes=10)),
-            GroceryItem(name="olive oil", checked=False, skylight_id="S-OIL-1",
+            ListItem(name="olive oil", checked=False, skylight_id="S-OIL-1",
                        skylight_timestamp=now - timedelta(minutes=5)),
 
             # Fuzzy matching candidates
-            GroceryItem(name="Greek Yogurt", checked=True, skylight_id="S-YOGURT-1",
+            ListItem(name="Greek Yogurt", checked=True, skylight_id="S-YOGURT-1",
                        skylight_timestamp=now - timedelta(minutes=20)),
-            GroceryItem(name="wheat bread", checked=False, skylight_id="S-WB-1",
+            ListItem(name="wheat bread", checked=False, skylight_id="S-WB-1",
                        skylight_timestamp=now - timedelta(minutes=35)),
 
             # More items than Paprika has
-            GroceryItem(name="skylight exclusive item", checked=False, skylight_id="S-EXCLUSIVE-1",
+            ListItem(name="skylight exclusive item", checked=False, skylight_id="S-EXCLUSIVE-1",
                        skylight_timestamp=now - timedelta(minutes=25)),
-            GroceryItem(name="extra skylight item", checked=True, skylight_id="S-EXTRA-1",
+            ListItem(name="extra skylight item", checked=True, skylight_id="S-EXTRA-1",
                        skylight_timestamp=now - timedelta(minutes=5)),
         ]
 

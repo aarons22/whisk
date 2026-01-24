@@ -446,7 +446,7 @@ Sync bidirectionally whenever status changes.
 **Implementation:**
 - When creating item in Paprika from Skylight: Let Paprika auto-assign aisle
 - When updating Paprika item: Never touch aisle field
-- Aisle field excluded from `GroceryItem` model
+- Aisle field excluded from `SkylightListItem` model
 
 ### Deletion Handling
 **Challenge:** Paprika doesn't support true deletion

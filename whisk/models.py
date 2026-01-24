@@ -1,4 +1,4 @@
-"""Data models for grocery list sync"""
+"""Data models for list sync"""
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -6,8 +6,8 @@ from typing import Optional
 
 
 @dataclass
-class GroceryItem:
-    """Represents a grocery list item that can exist in both Paprika and Skylight"""
+class ListItem:
+    """Represents a list item that can exist in both Paprika and Skylight"""
 
     name: str
     checked: bool = False
@@ -40,4 +40,4 @@ class GroceryItem:
         if self.exists_in_skylight:
             systems.append("S")
         system_str = "+".join(systems) if systems else "none"
-        return f"GroceryItem([{status}] {self.name} - {system_str})"
+        return f"ListItem([{status}] {self.name} - {system_str})"

@@ -440,7 +440,7 @@ class SetupWizard:
                         )
                         self.skylight_client.authenticate()
 
-                    items = self.skylight_client.get_grocery_list(pair.skylight_list)
+                    items = self.skylight_client.get_list_items(pair.skylight_list)
                     print(f"    ✅ Skylight '{pair.skylight_list}': {len(items)} items")
 
                 except Exception as e:

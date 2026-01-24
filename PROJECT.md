@@ -256,7 +256,7 @@ paprika-skylight/
 ├── README.md            # Setup instructions
 ├── pyproject.toml       # Dependencies
 ├── src/
-│   ├── models.py                 # GroceryItem data model ✅
+│   ├── models.py                 # SkylightListItem data model ✅
 │   ├── paprika_client.py         # Paprika API client ✅
 │   ├── skylight_client.py        # Skylight API client ✅
 │   ├── state_manager.py          # SQLite state tracking ✅
@@ -306,7 +306,7 @@ paprika-skylight/
 
 ### **Core Functionality**
 - **Authentication**: 100% ✅ Both systems
-- **Data Models**: 100% ✅ GroceryItem with timestamps
+- **Data Models**: 100% ✅ SkylightListItem with timestamps
 - **Error Handling**: 100% ✅ Comprehensive logging and retry logic
 - **State Management**: 100% ✅ Complete with change detection
 - **Sync Logic**: 100% ✅ Bidirectional with conflict resolution
