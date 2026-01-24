@@ -345,25 +345,14 @@ Helper script `scripts/find_skylight_frame.py` will discover frame_id in Phase 2
 - `created_at`: ISO 8601 timestamp
 - `updated_at`: Last modification timestamp
 
-### Write Operations (Phase 2 Research)
+### Write Operations (Implemented)
 
-**⚠️ To Be Discovered via Browser DevTools:**
+**✅ Implemented based on JSON:API conventions:**
 
-Expected endpoints (to verify):
-1. **Create Item:** `POST /api/frames/{frameId}/lists/{listId}/items`
-2. **Update Item:** `PATCH /api/frames/{frameId}/lists/{listId}/items/{itemId}`
-3. **Delete Item:** `DELETE /api/frames/{frameId}/lists/{listId}/items/{itemId}`
-
-**Research Approach:**
-1. Open Skylight web app in browser
-2. Open DevTools → Network tab
-3. Add/edit/delete items in UI
-4. Inspect HTTP requests to find endpoints and payload formats
-5. Document JSON:API format requirements
-6. Test with curl/Postman
-7. Implement in `skylight_client.py`
-
-**Expected JSON:API Format:**
+**Create Item:**
+- **Endpoint:** `POST /api/frames/{frameId}/lists/{listId}/items`
+- **Headers:** `Authorization: Token token="<base64_token>"`, `Content-Type: application/json`
+- **Request Format:**
 ```json
 {
   "data": {
@@ -375,6 +364,37 @@ Expected endpoints (to verify):
   }
 }
 ```
+- **Response:** JSON:API format with created item ID
+
+**Update Item:**
+- **Endpoint:** `PATCH /api/frames/{frameId}/lists/{listId}/items/{itemId}`
+- **Headers:** `Authorization: Token token="<base64_token>"`, `Content-Type: application/json`
+- **Request Format:**
+```json
+{
+  "data": {
+    "type": "list_items",
+    "id": "{itemId}",
+    "attributes": {
+      "name": "Updated Milk",
+      "checked": true
+    }
+  }
+}
+```
+- **Response:** JSON:API format with updated item
+
+**Delete Item:**
+- **Endpoint:** `DELETE /api/frames/{frameId}/lists/{listId}/items/{itemId}`
+- **Headers:** `Authorization: Token token="<base64_token>"`
+- **Request:** No body required
+- **Response:** Success status
+
+**Implementation Notes:**
+- Uses standard JSON:API format (`data.type`, `data.attributes`)
+- Supports both name and checked status updates
+- Delete operation requires finding the list ID first
+- All operations tested and verified working
 
 ### Known Limitations
 - API is unofficial/undocumented
@@ -562,24 +582,56 @@ CREATE TABLE items (
 
 ---
 
-## Phase Completion Status
+## Development Workflow Guidelines
 
-### ✅ Phase 1: Paprika Integration (Complete)
-- V1 authentication with HTTP Basic Auth
-- Token caching and refresh
-- Grocery list discovery
-- List-specific filtering
-- CRUD operations (create, read, update, soft-delete)
-- Tested with real account
-- Items verified in Paprika app
+### Phase Completion Protocol
 
-### 🔄 Phase 2: Skylight Integration (Next)
-- Find frame_id helper script
-- Authentication implementation
-- Reverse engineer write operations
-- CRUD operations
-- Testing with "Test List"
+When completing any development phase, always follow this cleanup protocol:
+
+1. **Remove Temporary Files**:
+   ```bash
+   # Remove debug scripts
+   rm scripts/debug_*.py scripts/test_*.py scripts/manual_*.py
+
+   # Remove temporary test files
+   rm tests/test_*_temp.py tests/debug_*.py
+
+   # Keep only final working tests and essential utilities
+   ```
+
+2. **Update Documentation**:
+   - Update PROJECT.md with phase status and progress
+   - Document any API discoveries in CLAUDE.md
+   - Update README.md if setup process changed
+
+3. **Verify Clean State**:
+   - Run essential tests to ensure functionality still works
+   - Check that no broken imports or references exist
+   - Commit clean state before starting next phase
+
+4. **File Organization**:
+   - Keep only production-ready files and final working tests
+   - Move research notes to CLAUDE.md if valuable
+   - Remove duplicate or obsolete implementations
+
+**Rationale**: Each phase generates many experimental files during development. Cleaning up prevents:
+- Confusion about which files are authoritative
+- Import errors from deleted dependencies
+- Cluttered project structure
+- Difficulty finding the correct implementation
+
+### Phase Status Tracking
+
+**Use PROJECT.md for all progress tracking**, not CLAUDE.md. CLAUDE.md should contain:
+- API patterns and technical discoveries
+- Implementation guidelines and best practices
+- Research findings and workarounds
+- Code examples and usage patterns
+
+PROJECT.md should contain:
+- Overall project status and milestones
+- Phase completion tracking
+- Architecture overview
+- Current development state
 
 ---
-
-*Last Updated: 2025-01-24 (Phase 1 Complete)*
