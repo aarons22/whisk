@@ -1,6 +1,37 @@
 {
   "permissions": {
-    "allow": ["Bash(npm run lint)", "Read(./src)"],
-    "ask": ["Bash(git push)", "Bash(rm *)"]
+    "allow": [
+      "Bash(python *)",
+      "Bash(pip *)",
+      "Bash(pytest *)",
+      "Bash(chmod +x *)",
+      "Bash(mkdir -p *)",
+      "Bash(rm scripts/test_*.py *)",
+      "Bash(rm scripts/debug_*.py *)",
+      "Bash(rm tests/test_*_temp.py *)",
+      "Bash(find . -name '*.py' *)",
+      "Bash(ls *)",
+      "Bash(echo * | base64 *)",
+      "Read(./src/*)",
+      "Read(./tests/*)",
+      "Read(./scripts/*)",
+      "Read(./*.md)",
+      "Read(./*.yaml)",
+      "Read(./*.toml)",
+      "Write(./src/*)",
+      "Write(./tests/*)",
+      "Write(./scripts/*)",
+      "Write(./*.md)",
+      "Edit(./src/*)",
+      "Edit(./tests/*)",
+      "Edit(./scripts/*)",
+      "Edit(./*.md)"
+    ],
+    "ask": [
+      "Bash(git push)",
+      "Bash(rm src/*)",
+      "Bash(rm -rf *)",
+      "Edit(./.env)"
+    ]
   }
 }
