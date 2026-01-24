@@ -319,11 +319,22 @@ class StateManager:
                     # New item in Paprika
                     changes['paprika_added'].append(item)
                 else:
-                    # Check for modifications
+                    # Check for modifications (timestamp OR checked status change)
+                    modified = False
+
+                    # Check timestamp if available
                     db_timestamp = self._iso_to_datetime(db_item.get('paprika_timestamp'))
                     if item.paprika_timestamp and db_timestamp:
                         if item.paprika_timestamp > db_timestamp:
-                            changes['paprika_modified'].append(item)
+                            modified = True
+
+                    # Check checked status change (important for Paprika which has no timestamps)
+                    if db_item['checked'] != item.checked:
+                        modified = True
+                        logger.debug(f"Paprika item '{item.name}' checked status changed: {db_item['checked']} → {item.checked}")
+
+                    if modified:
+                        changes['paprika_modified'].append(item)
 
             # Check Skylight items for additions and modifications
             for item in skylight_items:
@@ -333,13 +344,24 @@ class StateManager:
                     # New item in Skylight
                     changes['skylight_added'].append(item)
                 else:
-                    # Check for modifications
+                    # Check for modifications (timestamp OR checked status change)
+                    modified = False
+
+                    # Check timestamp if available
                     db_timestamp = self._iso_to_datetime(db_item.get('skylight_timestamp'))
                     if item.skylight_timestamp and db_timestamp:
                         if item.skylight_timestamp > db_timestamp:
-                            changes['skylight_modified'].append(item)
+                            modified = True
 
-            # Check for deletions
+                    # Check checked status change
+                    if db_item['checked'] != item.checked:
+                        modified = True
+                        logger.debug(f"Skylight item '{item.name}' checked status changed: {db_item['checked']} → {item.checked}")
+
+                    if modified:
+                        changes['skylight_modified'].append(item)
+
+            # Check for deletions - with Paprika as source of truth
             for name, db_item in db_items.items():
                 if db_item['deleted']:
                     continue  # Already marked as deleted
@@ -347,23 +369,30 @@ class StateManager:
                 paprika_missing = name not in paprika_lookup and db_item['paprika_id']
                 skylight_missing = name not in skylight_lookup and db_item['skylight_id']
 
+                # PAPRIKA IS SOURCE OF TRUTH:
+                # If item is missing from Paprika, it should be deleted everywhere
                 if paprika_missing:
-                    # Item was deleted from Paprika
-                    deleted_item = GroceryItem(
-                        name=name,
-                        paprika_id=db_item['paprika_id'],
-                        skylight_id=db_item['skylight_id']
-                    )
-                    changes['paprika_deleted'].append(deleted_item)
+                    # Item was deleted from Paprika (source of truth)
+                    # Mark as deleted in DB and delete from Skylight if it exists
+                    self.mark_item_deleted(db_item['id'])
+                    logger.info(f"Item '{name}' removed from Paprika (source of truth), marked as deleted in DB")
 
-                if skylight_missing:
-                    # Item was deleted from Skylight
-                    deleted_item = GroceryItem(
-                        name=name,
-                        paprika_id=db_item['paprika_id'],
-                        skylight_id=db_item['skylight_id']
-                    )
-                    changes['skylight_deleted'].append(deleted_item)
+                    # Only add to skylight_deleted if item actually exists in Skylight
+                    if db_item['skylight_id'] and name in skylight_lookup:
+                        deleted_item = GroceryItem(
+                            name=name,
+                            paprika_id=db_item['paprika_id'],
+                            skylight_id=db_item['skylight_id']
+                        )
+                        changes['skylight_deleted'].append(deleted_item)
+
+                elif skylight_missing:
+                    # Item was deleted from Skylight but still exists in Paprika
+                    # Since Paprika is source of truth, recreate item in Skylight
+                    if db_item['paprika_id'] and name in paprika_lookup:
+                        paprika_item = paprika_lookup[name]
+                        changes['paprika_modified'].append(paprika_item)  # This will create it in Skylight
+                        logger.info(f"Item '{name}' missing from Skylight but exists in Paprika, will recreate in Skylight")
 
             # Check for conflicts (item modified in both systems since last sync)
             for name in set(paprika_lookup.keys()) & set(skylight_lookup.keys()):

@@ -288,7 +288,7 @@ class SyncEngine:
         for item in changes.get('paprika_deletions', []):
             try:
                 if item.skylight_id:
-                    self.skylight.remove_item(item.skylight_id)
+                    self.skylight.remove_item(item.skylight_id, self.skylight_list_name)
                     results['skylight_deleted'].append(item.name)
                     logger.info(f"Deleted from Skylight: {item.name}")
             except Exception as e:

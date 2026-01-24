@@ -269,13 +269,17 @@ class SkylightClient:
                 if item_data.get("type") == "list_item":
                     attributes = item_data.get("attributes", {})
 
-                    # Parse timestamp
+                    # Parse timestamp - try updated_at first, then created_at
                     timestamp = None
+                    updated_at = attributes.get("updated_at") or attributes.get("modified_at") or attributes.get("last_modified_at")
                     created_at = attributes.get("created_at")
-                    if created_at:
+
+                    # Prefer updated_at if available
+                    timestamp_str = updated_at or created_at
+                    if timestamp_str:
                         try:
                             # Handle ISO 8601 format
-                            timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                            timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
                         except Exception as e:
                             logger.warning(
                                 f"Failed to parse timestamp for {attributes.get('label')}: {e}"
@@ -379,7 +383,7 @@ class SkylightClient:
             logger.error(f"Failed to add item to Skylight: {e}")
             raise
 
-    def update_item(self, skylight_id: str, checked: bool, name: Optional[str] = None) -> None:
+    def update_item(self, skylight_id: str, checked: bool, name: Optional[str] = None, list_name: str = None) -> None:
         """
         Update item (checked status or name) using discovered PUT method with explicit status
 
@@ -387,30 +391,24 @@ class SkylightClient:
             skylight_id: Skylight ID of the item
             checked: New checked status
             name: Optional new name for the item
+            list_name: Required list name for security (will not search all lists)
         """
         try:
             logger.debug(f"Updating item in Skylight: {skylight_id} (checked={checked}, name={name})")
 
-            # We need to find which list this item belongs to
-            lists = self.get_lists()
-            list_id = None
+            if not list_name:
+                raise ValueError("list_name is required - will not search all lists for security")
 
-            # Find the item across all lists
-            for lst in lists:
-                try:
-                    list_name = lst.get("attributes", {}).get("label", "")
-                    items = self.get_grocery_list(list_name)
-                    for item in items:
-                        if item.skylight_id == skylight_id:
-                            list_id = lst.get("id")
-                            break
-                    if list_id:
-                        break
-                except Exception:
-                    continue  # Skip lists we can't access
-
+            # Only search in the specified list (NEVER search other lists)
+            list_id = self.get_list_id_by_name(list_name)
             if not list_id:
-                raise Exception(f"Item {skylight_id} not found in any list")
+                raise Exception(f"List '{list_name}' not found")
+
+            # Verify item exists in this specific list
+            items = self.get_grocery_list(list_name)
+            item_found = any(item.skylight_id == skylight_id for item in items)
+            if not item_found:
+                raise Exception(f"Item {skylight_id} not found in list '{list_name}'")
 
             # Prepare the request body with explicit status value
             status = "completed" if checked else "pending"
@@ -443,40 +441,42 @@ class SkylightClient:
             logger.error(f"Failed to update item in Skylight: {e}")
             raise
 
-    def remove_item(self, skylight_id: str) -> None:
+    def remove_item(self, skylight_id: str, list_name: str = None) -> None:
         """
         Remove item from grocery list
 
         Args:
             skylight_id: Skylight ID of the item to remove
+            list_name: Optional list name to search in (REQUIRED for security)
         """
         try:
             logger.debug(f"Removing item from Skylight: {skylight_id}")
 
-            # We need to find which list this item belongs to
-            lists = self.get_lists()
+            if not list_name:
+                raise ValueError("list_name is required - will not search all lists for security")
+
             list_id = None
 
-            # Find the item across all lists
-            for lst in lists:
-                try:
-                    list_name = lst.get("attributes", {}).get("label", "")
-                    items = self.get_grocery_list(list_name)
-                    for item in items:
-                        if item.skylight_id == skylight_id:
-                            list_id = lst.get("id")
-                            break
-                    if list_id:
-                        break
-                except Exception:
-                    continue  # Skip lists we can't access
+            # Only search in the specified list (NEVER search other lists)
+            try:
+                target_list_id = self.get_list_id_by_name(list_name)
+                if not target_list_id:
+                    raise Exception(f"List '{list_name}' not found")
 
-            if not list_id:
-                raise Exception(f"Item {skylight_id} not found in any list")
+                # Check if item exists in this specific list
+                items = self.get_grocery_list(list_name)
+                if any(item.skylight_id == skylight_id for item in items):
+                    list_id = target_list_id
+                    logger.debug(f"Found item {skylight_id} in target list '{list_name}'")
+                else:
+                    raise Exception(f"Item {skylight_id} not found in list '{list_name}'")
 
-            # DELETE request - typically no body needed
+            except Exception as e:
+                raise Exception(f"Cannot remove item {skylight_id}: {e}")
+
+            # DELETE request
             self._make_request("DELETE", f"/frames/{self.frame_id}/lists/{list_id}/list_items/{skylight_id}")
-            logger.info(f"Removed item from Skylight: {skylight_id}")
+            logger.info(f"Removed item from Skylight list '{list_name}': {skylight_id}")
 
         except Exception as e:
             logger.error(f"Failed to remove item from Skylight: {e}")

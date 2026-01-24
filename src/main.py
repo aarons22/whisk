@@ -35,12 +35,12 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 
 from paprika_client import PaprikaClient
 from skylight_client import SkylightClient
-from state_manager import StateManager
-from sync_engine import SyncEngine
+from state_manager_v2 import StateManagerV2
+from sync_engine_v2 import SyncEngineV2
 
 # Global scheduler for signal handling
 scheduler: Optional[BlockingScheduler] = None
-sync_engine: Optional[SyncEngine] = None
+sync_engine: Optional[SyncEngineV2] = None
 logger = logging.getLogger(__name__)
 
 
@@ -155,7 +155,7 @@ def setup_logging(config: Dict[str, Any]) -> None:
         logger.info("Continuing with console logging only")
 
 
-def initialize_clients(config: Dict[str, Any]) -> tuple[PaprikaClient, SkylightClient, StateManager]:
+def initialize_clients(config: Dict[str, Any]) -> tuple[PaprikaClient, SkylightClient, StateManagerV2]:
     """
     Initialize API clients and state manager
 
@@ -192,10 +192,10 @@ def initialize_clients(config: Dict[str, Any]) -> tuple[PaprikaClient, SkylightC
         skylight_client.authenticate()
         logger.info("✅ Skylight client authenticated successfully")
 
-        # Initialize state manager
-        db_path = project_root / config.get('database', {}).get('path', 'sync_state.db')
-        state_manager = StateManager(str(db_path))
-        logger.info(f"✅ State manager initialized with database: {db_path}")
+        # Initialize state manager (Phase 6 architecture)
+        db_path = project_root / config.get('database', {}).get('path', 'sync_state_v2.db')
+        state_manager = StateManagerV2(str(db_path))
+        logger.info(f"✅ StateManagerV2 initialized with database: {db_path}")
 
         return paprika_client, skylight_client, state_manager
 
@@ -208,19 +208,19 @@ def create_sync_engine(
     config: Dict[str, Any],
     paprika_client: PaprikaClient,
     skylight_client: SkylightClient,
-    state_manager: StateManager
-) -> SyncEngine:
+    state_manager: StateManagerV2
+) -> SyncEngineV2:
     """
-    Create and configure sync engine
+    Create and configure SyncEngineV2 with Phase 6 architecture
 
     Args:
         config: Configuration dictionary
         paprika_client: Authenticated Paprika client
         skylight_client: Authenticated Skylight client
-        state_manager: Initialized state manager
+        state_manager: Initialized StateManagerV2
 
     Returns:
-        Configured SyncEngine instance
+        Configured SyncEngineV2 instance
     """
     paprika_list_name = config.get('paprika', {}).get('list_name', 'Test List')
     skylight_list_name = config.get('skylight', {}).get('list_name', 'Test List')
@@ -228,15 +228,29 @@ def create_sync_engine(
     logger.info(f"Creating sync engine for lists: '{paprika_list_name}' ↔ '{skylight_list_name}'")
 
     try:
-        sync_engine = SyncEngine(
+        # Phase 6 sync configuration
+        sync_config = {
+            'linking': {
+                'fuzzy_threshold': config.get('sync', {}).get('fuzzy_threshold', 0.85),
+                'case_sensitive': config.get('sync', {}).get('case_sensitive', False),
+                'exact_name_match': True,
+                'fuzzy_matching': True
+            },
+            'conflict_strategy': config.get('sync', {}).get('conflict_strategy', 'paprika_wins'),
+            'paprika_always_wins': config.get('sync', {}).get('paprika_always_wins', True),
+            'timestamp_tolerance': config.get('sync', {}).get('timestamp_tolerance_seconds', 60)
+        }
+
+        sync_engine = SyncEngineV2(
             paprika_client=paprika_client,
             skylight_client=skylight_client,
             state_manager=state_manager,
             paprika_list_name=paprika_list_name,
-            skylight_list_name=skylight_list_name
+            skylight_list_name=skylight_list_name,
+            config=sync_config
         )
 
-        logger.info("✅ Sync engine created successfully")
+        logger.info("✅ SyncEngineV2 created successfully with Phase 6 architecture")
         return sync_engine
 
     except Exception as e:
