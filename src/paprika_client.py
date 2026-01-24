@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 
 import requests
 
-from .models import GroceryItem
+from models import GroceryItem
 
 logger = logging.getLogger(__name__)
 
