@@ -167,7 +167,8 @@ class SetupWizard:
     def _test_paprika_auth(self, email: str, password: str) -> bool:
         """Test Paprika authentication"""
         try:
-            self.paprika_client = PaprikaClient(email, password)
+            token_cache_file = self.config_manager.config_dir / "paprika_token"
+            self.paprika_client = PaprikaClient(email, password, str(token_cache_file))
             self.paprika_client.authenticate()
             return True
         except Exception as e:
@@ -177,7 +178,8 @@ class SetupWizard:
     def _test_skylight_auth(self, email: str, password: str, frame_id: str) -> bool:
         """Test Skylight authentication"""
         try:
-            self.skylight_client = SkylightClient(email, password, frame_id)
+            token_cache_file = self.config_manager.config_dir / "skylight_token"
+            self.skylight_client = SkylightClient(email, password, frame_id, str(token_cache_file))
             self.skylight_client.authenticate()
             return True
         except Exception as e:
@@ -192,9 +194,11 @@ class SetupWizard:
         print("📋 Discovering Paprika lists...")
         try:
             if not self.paprika_client:
+                token_cache_file = self.config_manager.config_dir / "paprika_token"
                 self.paprika_client = PaprikaClient(
                     paprika_creds['paprika_email'],
-                    paprika_creds['paprika_password']
+                    paprika_creds['paprika_password'],
+                    str(token_cache_file)
                 )
                 self.paprika_client.authenticate()
 
@@ -212,10 +216,12 @@ class SetupWizard:
         print("\n📋 Discovering Skylight lists...")
         try:
             if not self.skylight_client:
+                token_cache_file = self.config_manager.config_dir / "skylight_token"
                 self.skylight_client = SkylightClient(
                     skylight_creds['skylight_email'],
                     skylight_creds['skylight_password'],
-                    skylight_creds['skylight_frame_id']
+                    skylight_creds['skylight_frame_id'],
+                    str(token_cache_file)
                 )
                 self.skylight_client.authenticate()
 
@@ -364,9 +370,11 @@ class SetupWizard:
                 # Test Paprika list
                 try:
                     if not self.paprika_client:
+                        token_cache_file = self.config_manager.config_dir / "paprika_token"
                         self.paprika_client = PaprikaClient(
                             config.paprika_email,
-                            config.paprika_password
+                            config.paprika_password,
+                            str(token_cache_file)
                         )
                         self.paprika_client.authenticate()
 
@@ -380,10 +388,12 @@ class SetupWizard:
                 # Test Skylight list
                 try:
                     if not self.skylight_client:
+                        token_cache_file = self.config_manager.config_dir / "skylight_token"
                         self.skylight_client = SkylightClient(
                             config.skylight_email,
                             config.skylight_password,
-                            config.skylight_frame_id
+                            config.skylight_frame_id,
+                            str(token_cache_file)
                         )
                         self.skylight_client.authenticate()
 

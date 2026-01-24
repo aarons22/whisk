@@ -19,7 +19,7 @@ class PaprikaClient:
 
     BASE_URL = "https://www.paprikaapp.com/api"
 
-    def __init__(self, email: str, password: str, token_cache_file: str = ".paprika_token"):
+    def __init__(self, email: str, password: str, token_cache_file: str = "paprika_token"):
         """
         Initialize Paprika client with credentials
 

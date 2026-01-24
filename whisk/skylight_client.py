@@ -20,7 +20,7 @@ class SkylightClient:
 
     BASE_URL = "https://app.ourskylight.com/api"
 
-    def __init__(self, email: str, password: str, frame_id: str, token_cache_file: str = ".skylight_token"):
+    def __init__(self, email: str, password: str, frame_id: str, token_cache_file: str = "skylight_token"):
         """
         Initialize Skylight client with credentials
 

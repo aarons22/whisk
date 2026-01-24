@@ -321,6 +321,25 @@ paprika-skylight/
 
 ## 📋 Backlog (Future Work)
 
+### **Token-Only Authentication (FUTURE)**
+- **Priority**: Medium-High (improved security)
+- **Description**: Store only authentication tokens instead of user credentials
+- **Benefits**: Enhanced security - no passwords stored at rest
+- **Challenge**: Token expiration handling when daemon runs unattended
+- **Status**: Identified during Phase 7 config redesign
+
+**Technical Approach:**
+- Store only tokens in configuration file
+- Implement token expiration detection and handling
+- Options: Graceful daemon shutdown vs. OS keyring fallback vs. user re-authentication
+- Both Paprika and Skylight APIs already handle 401 responses and auto-refresh
+
+**Implementation Considerations:**
+- Need strategy for unattended daemon operation when tokens expire
+- Could use OS keyring (keychain/credential manager) for credential fallback
+- Alternatively, require user intervention when tokens expire
+- Token lifetimes currently unknown - need investigation
+
 ### **Paprika Delete Mechanism Implementation (DEFERRED)**
 - **Priority**: Medium (functionality works with soft-delete workaround)
 - **Description**: Implement true Paprika deletion using full-sync operations
