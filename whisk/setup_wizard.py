@@ -32,12 +32,9 @@ class SetupWizard:
         self.paprika_client: Optional[PaprikaClient] = None
         self.skylight_client: Optional[SkylightClient] = None
 
-    def run(self, migrate: bool = False) -> int:
+    def run(self) -> int:
         """
         Run the complete setup wizard
-
-        Args:
-            migrate: If True, attempt to migrate from old configuration
 
         Returns:
             Exit code (0 for success)
@@ -47,10 +44,7 @@ class SetupWizard:
             print("Let's configure bidirectional sync for your Paprika ↔ Skylight grocery lists")
             print()
 
-            if migrate:
-                return self._run_migration()
-            else:
-                return self._run_fresh_setup()
+            return self._run_fresh_setup()
 
         except KeyboardInterrupt:
             print("\n⏹️ Setup cancelled by user")
@@ -74,24 +68,24 @@ class SetupWizard:
         print("\n🔍 Step 3: Discovering Lists")
         paprika_lists, skylight_lists = self._discover_lists(paprika_creds, skylight_creds)
 
-        print("\n🔗 Step 4: Configure List Pairs")
+        print("\n🔗 Step 3: Configure List Pairs")
         list_pairs = self._configure_list_pairs(paprika_lists, skylight_lists)
 
-        print("\n⚙️ Step 5: Sync Preferences")
+        print("\n⚙️ Step 4: Sync Preferences")
         sync_config = self._configure_sync_preferences()
 
-        print("\n💾 Step 6: Saving Configuration")
+        print("\n💾 Step 5: Saving Configuration")
         config = WhiskConfig(
             list_pairs=list_pairs,
             sync_interval_seconds=sync_config['interval'],
-            global_conflict_strategy=sync_config['strategy'],
+            global_conflict_strategy="newest_wins",  # Use default strategy
             **paprika_creds,
             **skylight_creds
         )
 
         self.config_manager.save_config(config)
 
-        print("\n🧪 Step 7: Testing Configuration")
+        print("\n🧪 Step 6: Testing Configuration")
         success = self._test_configuration(config)
 
         if success:
@@ -106,80 +100,6 @@ class SetupWizard:
         else:
             print("\n⚠️ Setup completed but configuration test failed")
             print("You may need to verify your credentials and try again.")
-            return 1
-
-    def _run_migration(self) -> int:
-        """Run migration from old paprika-skylight-sync configuration"""
-        print("📦 Migrating from paprika-skylight-sync...")
-
-        # Look for old configuration files
-        old_config_file = Path("config.yaml")
-        old_env_file = Path(".env")
-
-        if not old_config_file.exists() or not old_env_file.exists():
-            print("❌ No existing configuration found to migrate")
-            print("Run 'whisk setup' without --migrate for fresh setup")
-            return 1
-
-        try:
-            # Load old configuration
-            import yaml
-            from dotenv import load_dotenv
-            import os
-
-            load_dotenv(old_env_file)
-            with open(old_config_file, 'r') as f:
-                old_config = yaml.safe_load(f)
-
-            # Extract credentials
-            paprika_creds = {
-                'paprika_email': os.getenv('PAPRIKA_EMAIL', ''),
-                'paprika_password': os.getenv('PAPRIKA_PASSWORD', ''),
-            }
-            skylight_creds = {
-                'skylight_email': os.getenv('SKYLIGHT_EMAIL', ''),
-                'skylight_password': os.getenv('SKYLIGHT_PASSWORD', ''),
-                'skylight_frame_id': os.getenv('SKYLIGHT_FRAME_ID', ''),
-            }
-
-            # Convert to new format
-            paprika_list = old_config.get('paprika', {}).get('list_name', 'My Grocery List')
-            skylight_list = old_config.get('skylight', {}).get('list_name', 'Grocery List')
-            conflict_strategy = old_config.get('sync', {}).get('conflict_strategy', 'newest_wins')
-            sync_interval = old_config.get('sync_interval_seconds', 60)
-
-            list_pairs = [ListPairConfig(
-                paprika_list=paprika_list,
-                skylight_list=skylight_list,
-                conflict_strategy=conflict_strategy,
-                enabled=True
-            )]
-
-            # Create new configuration
-            config = WhiskConfig(
-                list_pairs=list_pairs,
-                sync_interval_seconds=sync_interval,
-                global_conflict_strategy=conflict_strategy,
-                **paprika_creds,
-                **skylight_creds
-            )
-
-            # Save new configuration
-            self.config_manager.save_config(config)
-
-            print("✅ Migration completed successfully!")
-            print(f"New configuration saved to: {self.config_manager.config_file}")
-            print()
-            print("Migrated settings:")
-            print(f"  List pair: {paprika_list} ↔ {skylight_list}")
-            print(f"  Conflict strategy: {conflict_strategy}")
-            print(f"  Sync interval: {sync_interval} seconds")
-
-            return 0
-
-        except Exception as e:
-            print(f"❌ Migration failed: {e}")
-            print("Try running 'whisk setup' without --migrate for fresh setup")
             return 1
 
     def _get_paprika_credentials(self) -> Dict[str, str]:
@@ -337,36 +257,16 @@ class SetupWizard:
                 "Enter the exact name of your Skylight grocery list"
             )
 
-            # Get conflict strategy
-            print("\nConflict resolution strategy:")
-            print("  1. newest_wins - Most recently modified item wins (recommended)")
-            print("  2. paprika_wins - Paprika always wins conflicts")
-            print("  3. skylight_wins - Skylight always wins conflicts")
-
-            while True:
-                choice = input("Choose strategy (1-3): ").strip()
-                if choice == "1":
-                    strategy = "newest_wins"
-                    break
-                elif choice == "2":
-                    strategy = "paprika_wins"
-                    break
-                elif choice == "3":
-                    strategy = "skylight_wins"
-                    break
-                else:
-                    print("❌ Please enter 1, 2, or 3")
-
-            # Create pair
+            # Create pair with default strategy
             pair = ListPairConfig(
                 paprika_list=paprika_list,
                 skylight_list=skylight_list,
-                conflict_strategy=strategy,
+                conflict_strategy="newest_wins",  # Always use default
                 enabled=True
             )
             pairs.append(pair)
 
-            print(f"\n✅ Added pair: {paprika_list} ↔ {skylight_list} ({strategy})")
+            print(f"\n✅ Added pair: {paprika_list} ↔ {skylight_list}")
 
             # Ask for another pair
             if len(pairs) >= 10:  # Reasonable limit
@@ -448,29 +348,8 @@ class SetupWizard:
             else:
                 print("❌ Please enter 1, 2, 3, 4, or 5")
 
-        print(f"\n🔄 Default conflict resolution strategy:")
-        print("  1. newest_wins - Most recently modified wins (recommended)")
-        print("  2. paprika_wins - Paprika always wins")
-        print("  3. skylight_wins - Skylight always wins")
-        print("(Individual list pairs can override this)")
-
-        while True:
-            choice = input("Choose default strategy (1-3): ").strip()
-            if choice == "1":
-                strategy = "newest_wins"
-                break
-            elif choice == "2":
-                strategy = "paprika_wins"
-                break
-            elif choice == "3":
-                strategy = "skylight_wins"
-                break
-            else:
-                print("❌ Please enter 1, 2, or 3")
-
         return {
-            'interval': interval,
-            'strategy': strategy
+            'interval': interval
         }
 
     def _test_configuration(self, config: WhiskConfig) -> bool:

@@ -54,11 +54,11 @@ Whisk supports one-to-one pairing between Paprika and Skylight lists:
 list_pairs:
   - paprika_list: "My Grocery List"
     skylight_list: "Shopping List"
-    conflict_strategy: "newest_wins"
+    enabled: true
 
   - paprika_list: "Costco Run"
     skylight_list: "Bulk Items"
-    conflict_strategy: "paprika_wins"
+    enabled: true
 ```
 
 ## CLI Commands
@@ -103,17 +103,12 @@ global_conflict_strategy: "newest_wins"
 list_pairs:
   - paprika_list: "My Grocery List"
     skylight_list: "Shopping List"
-    conflict_strategy: "newest_wins"
     enabled: true
 ```
 
 ## Conflict Resolution
 
-When items change in both apps, Whisk uses these strategies:
-
-- **`newest_wins`** - Most recently modified item wins (default)
-- **`paprika_wins`** - Paprika always wins conflicts
-- **`skylight_wins`** - Skylight always wins conflicts
+Whisk automatically handles conflicts when items change in both apps using the "newest wins" strategy - the most recently modified item always takes precedence. This provides intuitive behavior without requiring user decisions.
 
 ## Daemon Mode
 
@@ -200,16 +195,6 @@ pytest
 black whisk/
 mypy whisk/
 ```
-
-## Migration from paprika-skylight-sync
-
-If you're upgrading from the old `paprika-skylight-sync` project:
-
-```bash
-whisk setup --migrate
-```
-
-This will automatically convert your existing configuration.
 
 ## Requirements
 

@@ -30,7 +30,7 @@ def cmd_setup(args) -> int:
     from .setup_wizard import SetupWizard
 
     setup_wizard = SetupWizard(args.config_dir)
-    return setup_wizard.run(migrate=args.migrate)
+    return setup_wizard.run()
 
 
 def cmd_sync(args) -> int:
@@ -227,11 +227,6 @@ For detailed help on any command, use: whisk <command> --help
         "setup",
         help="Interactive setup wizard",
         description="Run interactive setup wizard to configure credentials and list pairs"
-    )
-    setup_parser.add_argument(
-        "--migrate",
-        action="store_true",
-        help="Migrate from existing paprika-skylight-sync configuration"
     )
 
     # Sync command
