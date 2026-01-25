@@ -163,15 +163,52 @@ main() {
     cat > "$WHISK_DIR/bin/whisk" << 'EOF'
 #!/bin/bash
 # Whisk launcher script
-SCRIPT_DIR="$(dirname "$0")"
-WHISK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the whisk installation directory (parent of bin/)
+WHISK_DIR="$(dirname "$SCRIPT_DIR")"
+# Path to the virtual environment Python
+VENV_PYTHON="$WHISK_DIR/venv/bin/python"
+
+# Check if virtual environment exists
+if [[ ! -f "$VENV_PYTHON" ]]; then
+    echo "Error: Virtual environment not found at $VENV_PYTHON"
+    echo "Try reinstalling whisk with:"
+    echo "  curl -sSL https://raw.githubusercontent.com/aarons22/whisk/main/install.sh | bash"
+    exit 1
+fi
+
+# Change to whisk directory and run
 cd "$WHISK_DIR"
-exec "$WHISK_DIR/venv/bin/python" -m whisk "$@"
+exec "$VENV_PYTHON" -m whisk "$@"
 EOF
     chmod +x "$WHISK_DIR/bin/whisk"
 
     # Create symlink
     create_symlink
+
+    # Verify installation
+    print_status "Verifying installation..."
+    if [[ -f "$WHISK_DIR/venv/bin/python" ]]; then
+        print_success "Virtual environment created successfully"
+    else
+        print_error "Virtual environment missing at $WHISK_DIR/venv/bin/python"
+        exit 1
+    fi
+
+    if [[ -f "$WHISK_DIR/bin/whisk" ]]; then
+        print_success "Launcher script created successfully"
+    else
+        print_error "Launcher script missing at $WHISK_DIR/bin/whisk"
+        exit 1
+    fi
+
+    if [[ -f "$HOME/.local/bin/whisk" ]]; then
+        print_success "Symlink created successfully"
+    else
+        print_warning "Symlink not found at $HOME/.local/bin/whisk"
+    fi
 
     print_success "Whisk installed successfully!"
     echo
