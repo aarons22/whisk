@@ -197,16 +197,11 @@ exec "\$VENV_PYTHON" -m whisk "\$@"
 EOF
     chmod +x "$WHISK_DIR/bin/whisk"
 
-    # Show what was actually written to the launcher script
-    print_status "Created launcher script contents:"
-    cat "$WHISK_DIR/bin/whisk"
-
     # Create symlink
     create_symlink
 
     # Verify installation
     print_status "Verifying installation..."
-    print_status "Installation directory: $WHISK_DIR"
 
     if [[ -f "$WHISK_DIR/venv/bin/python" ]]; then
         print_success "Virtual environment created successfully"
@@ -217,7 +212,6 @@ EOF
 
     if [[ -f "$WHISK_DIR/bin/whisk" ]]; then
         print_success "Launcher script created successfully"
-        print_status "Launcher script location: $WHISK_DIR/bin/whisk"
     else
         print_error "Launcher script missing at $WHISK_DIR/bin/whisk"
         exit 1
@@ -225,15 +219,6 @@ EOF
 
     if [[ -f "$HOME/.local/bin/whisk" ]]; then
         print_success "Symlink created successfully"
-        print_status "Symlink: $HOME/.local/bin/whisk -> $(readlink "$HOME/.local/bin/whisk")"
-
-        # Test the launcher script
-        print_status "Testing launcher script..."
-        if "$HOME/.local/bin/whisk" --version >/dev/null 2>&1; then
-            print_success "Launcher script working correctly"
-        else
-            print_warning "Launcher script test failed - check the output above"
-        fi
     else
         print_warning "Symlink not found at $HOME/.local/bin/whisk"
     fi
