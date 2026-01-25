@@ -169,7 +169,9 @@ main() {
 
     # Create launcher script
     mkdir -p "$WHISK_DIR/bin"
-    cat > "$WHISK_DIR/bin/whisk" << EOF
+
+    # Create launcher script with hardcoded path
+    cat > "$WHISK_DIR/bin/whisk" <<EOF
 #!/bin/bash
 # Whisk launcher script
 
@@ -182,6 +184,8 @@ VENV_PYTHON="\$WHISK_DIR/venv/bin/python"
 if [[ ! -f "\$VENV_PYTHON" ]]; then
     echo "Error: Virtual environment not found at \$VENV_PYTHON"
     echo "WHISK_DIR is set to: \$WHISK_DIR"
+    echo "Contents of \$WHISK_DIR:"
+    ls -la "\$WHISK_DIR" 2>/dev/null || echo "Directory does not exist"
     echo "Try reinstalling whisk with:"
     echo "  curl -sSL https://raw.githubusercontent.com/aarons22/whisk/main/install.sh | bash"
     exit 1
@@ -192,6 +196,10 @@ cd "\$WHISK_DIR"
 exec "\$VENV_PYTHON" -m whisk "\$@"
 EOF
     chmod +x "$WHISK_DIR/bin/whisk"
+
+    # Show what was actually written to the launcher script
+    print_status "Created launcher script contents:"
+    cat "$WHISK_DIR/bin/whisk"
 
     # Create symlink
     create_symlink
