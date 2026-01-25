@@ -63,16 +63,31 @@ check_python() {
 install_dependencies() {
     print_status "Installing Python dependencies..."
 
-    if ! python3 -m pip --version &> /dev/null; then
-        print_error "pip not found. Please install pip first"
+    # Check for venv module
+    if ! python3 -m venv --help &> /dev/null; then
+        print_error "Python venv module not found. On Debian/Ubuntu, install with:"
+        print_error "  sudo apt install python3-venv"
         exit 1
     fi
 
     cd "$WHISK_DIR"
-    python3 -m pip install --user -e . || {
+
+    # Create virtual environment
+    print_status "Creating virtual environment..."
+    python3 -m venv venv || {
+        print_error "Failed to create virtual environment"
+        exit 1
+    }
+
+    # Activate virtual environment and install dependencies
+    print_status "Installing dependencies in virtual environment..."
+    source venv/bin/activate
+    python -m pip install --upgrade pip
+    python -m pip install -e . || {
         print_error "Failed to install dependencies"
         exit 1
     }
+    deactivate
 }
 
 # Create symlink
@@ -148,8 +163,10 @@ main() {
     cat > "$WHISK_DIR/bin/whisk" << 'EOF'
 #!/bin/bash
 # Whisk launcher script
-cd "$(dirname "$0")/.."
-exec python3 -m whisk "$@"
+SCRIPT_DIR="$(dirname "$0")"
+WHISK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$WHISK_DIR"
+exec "$WHISK_DIR/venv/bin/python" -m whisk "$@"
 EOF
     chmod +x "$WHISK_DIR/bin/whisk"
 
@@ -157,6 +174,9 @@ EOF
     create_symlink
 
     print_success "Whisk installed successfully!"
+    echo
+    print_status "Installation uses a virtual environment in $WHISK_DIR/venv"
+    print_status "This avoids conflicts with system Python packages"
     echo
     echo "Quick Start:"
     echo "  whisk setup     # Run interactive setup"
