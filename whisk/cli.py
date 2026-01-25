@@ -549,6 +549,69 @@ def cmd_toggle_list_pair(config_manager, pair_number: int) -> int:
     return 0
 
 
+def cmd_upgrade(args) -> int:
+    """Upgrade Whisk to the latest version"""
+    import subprocess
+    import os
+    import requests
+    import json
+    from pathlib import Path
+
+    try:
+        # Check if we're in a git installation
+        whisk_dir = Path.home() / ".whisk"
+        if whisk_dir.exists() and (whisk_dir / ".git").exists():
+            print("🔄 Upgrading Whisk...")
+            print("📦 Pulling latest version from GitHub...")
+
+            # Change to whisk directory and pull
+            result = subprocess.run(
+                ["git", "pull", "origin", "main"],
+                cwd=whisk_dir,
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                print(f"❌ Failed to pull updates: {result.stderr}")
+                return 1
+
+            if "Already up to date" in result.stdout:
+                print("✅ Whisk is already up to date!")
+                return 0
+
+            # Reinstall dependencies
+            print("📦 Updating dependencies...")
+            result = subprocess.run(
+                ["python3", "-m", "pip", "install", "--user", "-e", "."],
+                cwd=whisk_dir,
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode != 0:
+                print(f"❌ Failed to update dependencies: {result.stderr}")
+                return 1
+
+            print("✅ Whisk upgraded successfully!")
+            print("🔄 Changes will take effect immediately.")
+            return 0
+
+        else:
+            print("❌ Whisk upgrade only works with git-based installations.")
+            print("💡 If you installed with pip, use: pip install --upgrade whisk")
+            print("💡 To switch to git-based installation, run the install script again:")
+            print("   curl -sSL https://raw.githubusercontent.com/aarons22/whisk/main/install.sh | bash")
+            return 1
+
+    except ImportError as e:
+        print(f"❌ Missing required dependency: {e}")
+        return 1
+    except Exception as e:
+        print(f"❌ Upgrade failed: {e}")
+        return 1
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the main argument parser"""
     parser = argparse.ArgumentParser(
@@ -687,6 +750,13 @@ For detailed help on any command, use: whisk <command> --help
         help="Configuration action to perform"
     )
 
+    # Upgrade command
+    subparsers.add_parser(
+        "upgrade",
+        help="Upgrade Whisk to the latest version",
+        description="Pull latest version from GitHub and reinstall dependencies"
+    )
+
     return parser
 
 
@@ -713,6 +783,7 @@ def main() -> int:
         "status": cmd_status,
         "lists": cmd_lists,
         "config": cmd_config,
+        "upgrade": cmd_upgrade,
     }
 
     handler = command_handlers.get(args.command)
