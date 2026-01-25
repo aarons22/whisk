@@ -444,6 +444,12 @@ class WhiskSyncEngine:
             # Create missing items in Skylight (from unlinked Paprika items)
             for p_item in unlinked_paprika:
                 try:
+                    logger.debug(f"Creating item in Skylight: name='{p_item.name}', checked={p_item.checked}")
+
+                    if not p_item.name or not p_item.name.strip():
+                        logger.error(f"Paprika item has empty/blank name: {p_item}")
+                        continue
+
                     skylight_id = self.skylight_client.add_item(
                         name=p_item.name,
                         checked=p_item.checked,
@@ -473,6 +479,12 @@ class WhiskSyncEngine:
             # Create missing items in Paprika (from unlinked Skylight items)
             for s_item in unlinked_skylight:
                 try:
+                    logger.debug(f"Creating item in Paprika: name='{s_item.name}', checked={s_item.checked}")
+
+                    if not s_item.name or not s_item.name.strip():
+                        logger.error(f"Skylight item has empty/blank name: {s_item}")
+                        continue
+
                     paprika_id = self.paprika_client.add_item(
                         name=s_item.name,
                         checked=s_item.checked,
