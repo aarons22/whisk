@@ -169,28 +169,27 @@ main() {
 
     # Create launcher script
     mkdir -p "$WHISK_DIR/bin"
-    cat > "$WHISK_DIR/bin/whisk" << 'EOF'
+    cat > "$WHISK_DIR/bin/whisk" << EOF
 #!/bin/bash
 # Whisk launcher script
 
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Get the whisk installation directory (parent of bin/)
-WHISK_DIR="$(dirname "$SCRIPT_DIR")"
+# Hardcode the whisk directory path to avoid path resolution issues
+WHISK_DIR="$WHISK_DIR"
 # Path to the virtual environment Python
-VENV_PYTHON="$WHISK_DIR/venv/bin/python"
+VENV_PYTHON="\$WHISK_DIR/venv/bin/python"
 
 # Check if virtual environment exists
-if [[ ! -f "$VENV_PYTHON" ]]; then
-    echo "Error: Virtual environment not found at $VENV_PYTHON"
+if [[ ! -f "\$VENV_PYTHON" ]]; then
+    echo "Error: Virtual environment not found at \$VENV_PYTHON"
+    echo "WHISK_DIR is set to: \$WHISK_DIR"
     echo "Try reinstalling whisk with:"
     echo "  curl -sSL https://raw.githubusercontent.com/aarons22/whisk/main/install.sh | bash"
     exit 1
 fi
 
 # Change to whisk directory and run
-cd "$WHISK_DIR"
-exec "$VENV_PYTHON" -m whisk "$@"
+cd "\$WHISK_DIR"
+exec "\$VENV_PYTHON" -m whisk "\$@"
 EOF
     chmod +x "$WHISK_DIR/bin/whisk"
 
