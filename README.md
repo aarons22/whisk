@@ -88,3 +88,7 @@ whisk upgrade    # Update to latest version
 ---
 
 That's it! Whisk runs quietly in the background keeping your lists in sync so you never have to think about it.
+
+## License
+
+Licensed under the [MIT License](LICENSE).
