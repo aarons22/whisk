@@ -4,6 +4,12 @@
 
 Whisk automatically syncs your grocery lists between Paprika Recipe Manager and Skylight Calendar. Add an item on your phone, see it on your kitchen display. Check it off on Skylight, it disappears from Paprika. Simple as that.
 
+## Important Notes
+
+⚠️ **Security**: Your Paprika and Skylight credentials are stored locally on your machine only. While this works and is relatively low risk given the nature of grocery list data, we plan to explore more secure authentication methods in the future.
+
+⚠️ **No Official Support**: This tool is **not supported by Paprika or Skylight**. You use it at your own risk. It works by interfacing with unofficial APIs that could change at any time.
+
 ## Installation
 
 Run this one command to install Whisk:
