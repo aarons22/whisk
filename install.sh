@@ -94,14 +94,23 @@ install_dependencies() {
 create_symlink() {
     print_status "Creating symlink..."
 
-    # Try system install first
-    if [[ -w "$INSTALL_DIR" ]]; then
-        sudo ln -sf "$WHISK_DIR/bin/whisk" "$INSTALL_DIR/whisk" 2>/dev/null || true
-    fi
-
     # Create user bin directory if needed
     mkdir -p "$HOME/.local/bin"
+
+    # Remove existing symlink/file if it exists
+    if [[ -e "$HOME/.local/bin/whisk" ]]; then
+        rm -f "$HOME/.local/bin/whisk"
+        print_status "Removed existing whisk command"
+    fi
+
+    # Create new symlink
     ln -sf "$WHISK_DIR/bin/whisk" "$HOME/.local/bin/whisk"
+    print_status "Created symlink: $HOME/.local/bin/whisk -> $WHISK_DIR/bin/whisk"
+
+    # Try system install as well
+    if [[ -w "$INSTALL_DIR" ]] && command -v sudo &> /dev/null; then
+        sudo ln -sf "$WHISK_DIR/bin/whisk" "$INSTALL_DIR/whisk" 2>/dev/null || true
+    fi
 
     # Add to PATH if not already there
     add_to_path "$HOME/.local/bin"
@@ -190,6 +199,8 @@ EOF
 
     # Verify installation
     print_status "Verifying installation..."
+    print_status "Installation directory: $WHISK_DIR"
+
     if [[ -f "$WHISK_DIR/venv/bin/python" ]]; then
         print_success "Virtual environment created successfully"
     else
@@ -199,6 +210,7 @@ EOF
 
     if [[ -f "$WHISK_DIR/bin/whisk" ]]; then
         print_success "Launcher script created successfully"
+        print_status "Launcher script location: $WHISK_DIR/bin/whisk"
     else
         print_error "Launcher script missing at $WHISK_DIR/bin/whisk"
         exit 1
@@ -206,6 +218,15 @@ EOF
 
     if [[ -f "$HOME/.local/bin/whisk" ]]; then
         print_success "Symlink created successfully"
+        print_status "Symlink: $HOME/.local/bin/whisk -> $(readlink "$HOME/.local/bin/whisk")"
+
+        # Test the launcher script
+        print_status "Testing launcher script..."
+        if "$HOME/.local/bin/whisk" --version >/dev/null 2>&1; then
+            print_success "Launcher script working correctly"
+        else
+            print_warning "Launcher script test failed - check the output above"
+        fi
     else
         print_warning "Symlink not found at $HOME/.local/bin/whisk"
     fi
