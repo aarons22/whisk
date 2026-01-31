@@ -265,7 +265,13 @@ class SkylightClient:
 
         try:
             response = self._session.request(method, url, json=data, headers=headers)
+
             response.raise_for_status()
+
+            # Handle empty responses
+            if not response.text.strip():
+                logger.debug("Empty response body")
+                return {}
 
             return response.json()
 
@@ -628,6 +634,11 @@ class SkylightClient:
 
             result = self._make_request("GET", endpoint)
 
+            # Handle case where result might be None
+            if result is None:
+                logger.warning("Meal sittings API returned None response")
+                return []
+
             # Handle JSON:API format response
             data = result.get("data", [])
             included = result.get("included", [])
@@ -643,15 +654,17 @@ class SkylightClient:
                     relationships = item.get("relationships", {})
 
                     # Get meal category info
-                    meal_category_data = relationships.get("meal_category", {}).get("data", {})
-                    meal_category_id = meal_category_data.get("id")
+                    meal_category_rel = relationships.get("meal_category", {})
+                    meal_category_data = meal_category_rel.get("data") if meal_category_rel else None
+                    meal_category_id = meal_category_data.get("id") if meal_category_data else None
                     meal_category_label = None
                     if meal_category_id and meal_category_id in meal_categories:
                         meal_category_label = meal_categories[meal_category_id]["attributes"]["label"]
 
                     # Get meal recipe info
-                    meal_recipe_data = relationships.get("meal_recipe", {}).get("data", {})
-                    meal_recipe_id = meal_recipe_data.get("id")
+                    meal_recipe_rel = relationships.get("meal_recipe", {})
+                    meal_recipe_data = meal_recipe_rel.get("data") if meal_recipe_rel else None
+                    meal_recipe_id = meal_recipe_data.get("id") if meal_recipe_data else None
                     meal_recipe_summary = None
                     if meal_recipe_id and meal_recipe_id in meal_recipes:
                         meal_recipe_summary = meal_recipes[meal_recipe_id]["attributes"]["summary"]
@@ -702,72 +715,59 @@ class SkylightClient:
         try:
             logger.debug(f"Creating meal sitting in Skylight: {name} on {date} ({meal_type})")
 
-            # First, we need to get available meal categories to find the right ID
-            # For now, let's create a placeholder implementation
-            # TODO: Add meal category lookup
+            # Get correct meal category ID from API
             meal_category_id = self._get_meal_category_id(meal_type)
+            if not meal_category_id:
+                raise Exception(f"Could not find meal category for type: {meal_type}")
 
-            # Create meal recipe first
-            recipe_data = {
-                "data": {
-                    "type": "meal_recipe",
-                    "attributes": {
-                        "summary": name,
-                        "description": None
-                    },
-                    "relationships": {
-                        "meal_category": {
-                            "data": {
-                                "id": meal_category_id,
-                                "type": "meal_category"
-                            }
-                        }
-                    }
-                }
+            # Use the actual payload format discovered from browser inspection
+            sitting_data = {
+                "meal_recipe_id": None,
+                "meal_category_id": meal_category_id,
+                "add_to_grocery_list": False,
+                "date": date.isoformat(),
+                "note": "",
+                "rrule": None,
+                "summary": name,
+                "description": "",
+                "saveToRecipeBox": False
             }
 
-            # Create the meal sitting with proper JSON:API format
-            date_range_params = f"?date_min={date.isoformat()}&date_max={date.isoformat()}&include=meal_category%2Cmeal_recipe"
-            endpoint = f"/frames/{self.frame_id}/meals/sittings{date_range_params}"
+            # Use the correct endpoint with date range parameters (as seen in browser)
+            params_str = f"?date_min={date.isoformat()}&date_max={date.isoformat()}&include=meal_category%2Cmeal_recipe"
+            endpoint = f"/frames/{self.frame_id}/meals/sittings{params_str}"
 
-            # Use the structure from the API request you provided
-            data = {
-                "data": [
-                    {
-                        "type": "meal_sitting",
-                        "attributes": {
-                            "summary": name,
-                            "description": None,
-                            "note": None,
-                            "rrule": None,
-                            "recurring": False,
-                            "instances": [date.isoformat()]
-                        },
-                        "relationships": {
-                            "meal_category": {
-                                "data": {
-                                    "id": meal_category_id,
-                                    "type": "meal_category"
-                                }
-                            }
-                        }
-                    }
-                ],
-                "meta": {
-                    "date_min": date.isoformat(),
-                    "date_max": date.isoformat()
-                }
-            }
+            result = self._make_request("POST", endpoint, sitting_data)
 
-            result = self._make_request("POST", endpoint, data)
+            # Log the response to understand the format
+            logger.debug(f"Meal creation response: {result} (type: {type(result)})")
 
             # Extract created meal ID from response
-            created_meals = result.get("data", [])
-            if created_meals:
-                meal_id = created_meals[0].get("id")
-                if meal_id:
+            if isinstance(result, dict):
+                # JSON:API format response
+                created_meal = result.get("data", {})
+                if created_meal:
+                    meal_id = created_meal.get("id")
+                    if meal_id:
+                        logger.info(f"Created meal sitting in Skylight: {name} (id={meal_id})")
+                        return str(meal_id)
+
+                # If no data field, try direct response
+                if "id" in result:
+                    meal_id = result["id"]
                     logger.info(f"Created meal sitting in Skylight: {name} (id={meal_id})")
                     return str(meal_id)
+            elif isinstance(result, list):
+                # Response is a list - take the first item
+                if result and len(result) > 0:
+                    first_item = result[0]
+                    if isinstance(first_item, dict) and "id" in first_item:
+                        meal_id = first_item["id"]
+                        logger.info(f"Created meal sitting in Skylight: {name} (id={meal_id})")
+                        return str(meal_id)
+
+            # Log the full response to understand the format
+            logger.warning(f"Unexpected response format from meal creation: {result}")
 
             raise Exception("No meal ID returned from create request")
 
@@ -776,16 +776,62 @@ class SkylightClient:
             raise
 
     def _get_meal_category_id(self, meal_type: str):
-        """Get meal category ID for the given meal type (placeholder implementation)"""
-        # TODO: Implement proper meal category lookup
-        # For now, return a default ID based on meal type
-        category_map = {
-            "breakfast": "1",
-            "lunch": "2",
-            "dinner": "3",
-            "snack": "4"
-        }
-        return category_map.get(meal_type.lower(), "1")
+        """Get meal category ID for the given meal type using dedicated categories API"""
+        try:
+            # Use the dedicated meal categories endpoint
+            result = self._make_request("GET", f"/frames/{self.frame_id}/meals/categories")
+
+            logger.debug(f"Categories API response: {result} (type: {type(result)})")
+
+            # Handle both dict and list response formats
+            categories_data = []
+            if isinstance(result, dict):
+                categories_data = result.get("data", [])
+            elif isinstance(result, list):
+                categories_data = result
+            else:
+                logger.error(f"Unexpected categories response type: {type(result)}")
+                return None
+
+            # Extract meal categories from response data
+            meal_categories = {}
+            for item in categories_data:
+                if item.get("type") == "meal_category":
+                    label = item["attributes"]["label"].lower()
+                    meal_categories[label] = item["id"]
+
+            logger.debug(f"Available meal categories: {meal_categories}")
+
+            # If no categories found, return None to trigger error
+            if not meal_categories:
+                logger.error("No meal categories found in Skylight frame")
+                return None
+
+            # Map meal type to category
+            meal_type_lower = meal_type.lower()
+            if meal_type_lower in meal_categories:
+                logger.debug(f"Found exact match for meal type '{meal_type}': {meal_categories[meal_type_lower]}")
+                return meal_categories[meal_type_lower]
+
+            # Try some common mappings
+            type_mapping = {
+                "snack": "snacks",  # Sometimes it's plural
+            }
+
+            mapped_type = type_mapping.get(meal_type_lower, meal_type_lower)
+            if mapped_type in meal_categories:
+                logger.warning(f"Meal type '{meal_type}' not found, using '{mapped_type}' category")
+                return meal_categories[mapped_type]
+
+            # Use any available category as last resort
+            default_id = list(meal_categories.values())[0]
+            default_label = list(meal_categories.keys())[0]
+            logger.warning(f"Meal type '{meal_type}' not found, using available category '{default_label}' (ID: {default_id})")
+            return default_id
+
+        except Exception as e:
+            logger.error(f"Failed to get meal category ID: {e}")
+            return None
 
     def update_meal_sitting(self, sitting_id: str, name: str, date, meal_type: str):
         """
@@ -801,35 +847,35 @@ class SkylightClient:
             logger.debug(f"Updating meal sitting in Skylight: {sitting_id}")
 
             meal_category_id = self._get_meal_category_id(meal_type)
+            if not meal_category_id:
+                raise Exception(f"Could not find meal category for type: {meal_type}")
 
-            # Update using the meal sittings endpoint
-            date_range_params = f"?date_min={date.isoformat()}&date_max={date.isoformat()}&include=meal_category%2Cmeal_recipe"
-            endpoint = f"/frames/{self.frame_id}/meals/sittings/{sitting_id}{date_range_params}"
-
-            data = {
-                "data": {
-                    "type": "meal_sitting",
-                    "id": sitting_id,
-                    "attributes": {
-                        "summary": name,
-                        "description": None,
-                        "note": None,
-                        "rrule": None,
-                        "recurring": False,
-                        "instances": [date.isoformat()]
-                    },
-                    "relationships": {
-                        "meal_category": {
-                            "data": {
-                                "id": meal_category_id,
-                                "type": "meal_category"
-                            }
-                        }
-                    }
-                }
+            # Use the same payload format as creation (discovered from browser)
+            sitting_data = {
+                "meal_recipe_id": None,
+                "meal_category_id": meal_category_id,
+                "add_to_grocery_list": False,
+                "date": date.isoformat(),
+                "note": "",
+                "rrule": None,
+                "summary": name,
+                "description": "",
+                "saveToRecipeBox": False
             }
 
-            result = self._make_request("PATCH", endpoint, data)
+            # Try instance-based update first (similar to delete endpoint)
+            try:
+                date_params = f"?date_min={date.isoformat()}&date_max={date.isoformat()}&include=meal_category%2Cmeal_recipe"
+                endpoint = f"/frames/{self.frame_id}/meals/sittings/{sitting_id}/instances/{date.isoformat()}{date_params}"
+                result = self._make_request("PATCH", endpoint, sitting_data)
+                logger.info(f"Updated meal sitting instance in Skylight: {sitting_id}")
+                return
+            except Exception as e:
+                logger.warning(f"Instance-based update failed: {e}, trying direct update")
+
+            # Fallback to simple endpoint for updates
+            endpoint = f"/frames/{self.frame_id}/meals/sittings/{sitting_id}"
+            result = self._make_request("PATCH", endpoint, sitting_data)
             logger.info(f"Updated meal sitting in Skylight: {sitting_id}")
 
         except Exception as e:
@@ -847,12 +893,10 @@ class SkylightClient:
         try:
             logger.debug(f"Deleting meal sitting from Skylight: {sitting_id}")
 
-            # Use the correct endpoint format based on the API request you provided
             if date:
-                # Delete specific instance (date-specific meal)
-                endpoint = f"/frames/{self.frame_id}/meals/sittings/{sitting_id}/instances/{date.isoformat()}"
+                # Delete specific instance (date-specific meal) - using discovered format
                 date_params = f"?date_min={date.isoformat()}&date_max={date.isoformat()}&include=meal_category%2Cmeal_recipe"
-                endpoint += date_params
+                endpoint = f"/frames/{self.frame_id}/meals/sittings/{sitting_id}/instances/{date.isoformat()}{date_params}"
             else:
                 # Delete entire meal sitting
                 endpoint = f"/frames/{self.frame_id}/meals/sittings/{sitting_id}"
