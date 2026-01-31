@@ -33,6 +33,14 @@ class WhiskConfig:
     # Sync behavior
     sync_interval_seconds: int = 60
 
+    # Meal sync options
+    meal_sync_enabled: bool = True
+    meal_sync_days_ahead: int = 14  # 2 weeks forward
+    sync_breakfast: bool = True
+    sync_lunch: bool = True
+    sync_dinner: bool = True
+    sync_snacks: bool = True
+
     # Credentials (loaded from config file)
     paprika_email: str = ""
     paprika_password: str = ""
@@ -124,15 +132,23 @@ class ConfigManager:
                     enabled=pair_data.get('enabled', True)
                 ))
 
-        if not list_pairs:
-            raise ValueError("No list pairs configured. Run 'whisk setup' to configure list pairs.")
-
-        # Create config object
+        # Create config object first to check meal sync setting
         config = WhiskConfig(
             sync_interval_seconds=yaml_data.get('sync_interval_seconds', 60),
             list_pairs=list_pairs,
+            # Meal sync options
+            meal_sync_enabled=yaml_data.get('meal_sync_enabled', True),
+            meal_sync_days_ahead=yaml_data.get('meal_sync_days_ahead', 14),
+            sync_breakfast=yaml_data.get('sync_breakfast', True),
+            sync_lunch=yaml_data.get('sync_lunch', True),
+            sync_dinner=yaml_data.get('sync_dinner', True),
+            sync_snacks=yaml_data.get('sync_snacks', True),
             **credentials
         )
+
+        # Check if we have either list pairs or meal sync enabled
+        if not list_pairs and not config.meal_sync_enabled:
+            raise ValueError("No list pairs configured and meal sync is disabled. Run 'whisk setup' to configure at least one sync method.")
 
         # Validate configuration
         self._validate_config(config)
@@ -156,6 +172,13 @@ class ConfigManager:
         yaml_data = {
             'sync_interval_seconds': config.sync_interval_seconds,
             'credentials': encoded_credentials,
+            # Meal sync options
+            'meal_sync_enabled': config.meal_sync_enabled,
+            'meal_sync_days_ahead': config.meal_sync_days_ahead,
+            'sync_breakfast': config.sync_breakfast,
+            'sync_lunch': config.sync_lunch,
+            'sync_dinner': config.sync_dinner,
+            'sync_snacks': config.sync_snacks,
             'list_pairs': [
                 {
                     'paprika_list': pair.paprika_list,
@@ -212,9 +235,9 @@ class ConfigManager:
         if config.sync_interval_seconds < 30:
             errors.append("sync_interval_seconds must be at least 30 seconds")
 
-        # Validate list pairs
-        if not config.list_pairs:
-            errors.append("At least one list pair must be configured")
+        # Validate list pairs - allow empty if meal sync is enabled
+        if not config.list_pairs and not config.meal_sync_enabled:
+            errors.append("At least one list pair must be configured or meal sync must be enabled")
 
         for i, pair in enumerate(config.list_pairs):
             if not pair.paprika_list.strip():

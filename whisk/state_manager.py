@@ -105,6 +105,11 @@ class StateManager:
             self._create_item_links_table()
             self._create_sync_log_table()
 
+            # Create meal tables
+            self._create_paprika_meals_table()
+            self._create_skylight_meals_table()
+            self._create_meal_links_table()
+
             self.conn.commit()
             logger.info("StateManager database initialized successfully")
 
@@ -197,6 +202,71 @@ class StateManager:
         CREATE INDEX IF NOT EXISTS idx_sync_log_created ON sync_log(created_at);
         CREATE INDEX IF NOT EXISTS idx_sync_log_paprika ON sync_log(paprika_item_id);
         CREATE INDEX IF NOT EXISTS idx_sync_log_skylight ON sync_log(skylight_item_id);
+        """
+        self.conn.executescript(schema_sql)
+
+    def _create_paprika_meals_table(self) -> None:
+        """Create Paprika meals table"""
+        schema_sql = """
+        CREATE TABLE IF NOT EXISTS paprika_meals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paprika_id TEXT NOT NULL UNIQUE,
+            meal_name TEXT NOT NULL,
+            meal_date TEXT NOT NULL,  -- ISO date format
+            meal_type TEXT NOT NULL,  -- breakfast, lunch, dinner, snack
+            recipe_uid TEXT,
+            notes TEXT,
+            -- Timestamps
+            paprika_timestamp TEXT,  -- ISO 8601 format
+            last_synced_at TEXT,     -- ISO 8601 format
+            deleted INTEGER DEFAULT 0 -- Track deletions
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_paprika_meals_id ON paprika_meals(paprika_id);
+        CREATE INDEX IF NOT EXISTS idx_paprika_meals_date ON paprika_meals(meal_date);
+        CREATE INDEX IF NOT EXISTS idx_paprika_meals_type ON paprika_meals(meal_type);
+        CREATE INDEX IF NOT EXISTS idx_paprika_meals_deleted ON paprika_meals(deleted);
+        """
+        self.conn.executescript(schema_sql)
+
+    def _create_skylight_meals_table(self) -> None:
+        """Create Skylight meals table"""
+        schema_sql = """
+        CREATE TABLE IF NOT EXISTS skylight_meals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            skylight_id TEXT NOT NULL UNIQUE,
+            meal_name TEXT NOT NULL,
+            meal_date TEXT NOT NULL,  -- ISO date format
+            meal_type TEXT NOT NULL,  -- breakfast, lunch, dinner, snack
+            notes TEXT,
+            -- Timestamps
+            skylight_timestamp TEXT, -- ISO 8601 format
+            last_synced_at TEXT,     -- ISO 8601 format
+            deleted INTEGER DEFAULT 0 -- Track deletions
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skylight_meals_id ON skylight_meals(skylight_id);
+        CREATE INDEX IF NOT EXISTS idx_skylight_meals_date ON skylight_meals(meal_date);
+        CREATE INDEX IF NOT EXISTS idx_skylight_meals_type ON skylight_meals(meal_type);
+        CREATE INDEX IF NOT EXISTS idx_skylight_meals_deleted ON skylight_meals(deleted);
+        """
+        self.conn.executescript(schema_sql)
+
+    def _create_meal_links_table(self) -> None:
+        """Create foreign key relationships between meals"""
+        schema_sql = """
+        CREATE TABLE IF NOT EXISTS meal_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paprika_meal_id INTEGER NOT NULL REFERENCES paprika_meals(id) ON DELETE CASCADE,
+            skylight_meal_id INTEGER NOT NULL REFERENCES skylight_meals(id) ON DELETE CASCADE,
+            linked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            confidence_score REAL DEFAULT 1.0,
+            UNIQUE(paprika_meal_id, skylight_meal_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_meal_links_paprika ON meal_links(paprika_meal_id);
+        CREATE INDEX IF NOT EXISTS idx_meal_links_skylight ON meal_links(skylight_meal_id);
+        CREATE INDEX IF NOT EXISTS idx_meal_links_confidence ON meal_links(confidence_score);
         """
         self.conn.executescript(schema_sql)
 
@@ -669,3 +739,182 @@ class StateManager:
         except Exception as e:
             logger.error(f"Failed to get sync statistics: {e}")
             return {'error': str(e)}
+
+    # Meal Management Operations
+
+    def save_meal(self, meal):
+        """
+        Save a MealItem to database
+
+        Args:
+            meal: MealItem instance to save
+
+        Returns:
+            Database ID of saved meal
+        """
+        try:
+            cursor = self.conn.cursor()
+            now = datetime.now(timezone.utc).isoformat()
+
+            if meal.exists_in_paprika:
+                # Save to paprika_meals table
+                cursor.execute("""
+                    INSERT OR REPLACE INTO paprika_meals (
+                        paprika_id, meal_name, meal_date, meal_type, recipe_uid, notes,
+                        paprika_timestamp, last_synced_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    meal.paprika_id,
+                    meal.name,
+                    meal.date.isoformat(),
+                    meal.meal_type,
+                    meal.recipe_uid,
+                    meal.notes,
+                    meal.paprika_timestamp.isoformat() if meal.paprika_timestamp else None,
+                    now
+                ))
+                meal_id = cursor.lastrowid
+                logger.debug(f"Saved Paprika meal: {meal.name} (id={meal_id})")
+
+            if meal.exists_in_skylight:
+                # Save to skylight_meals table
+                cursor.execute("""
+                    INSERT OR REPLACE INTO skylight_meals (
+                        skylight_id, meal_name, meal_date, meal_type, notes,
+                        skylight_timestamp, last_synced_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    meal.skylight_id,
+                    meal.name,
+                    meal.date.isoformat(),
+                    meal.meal_type,
+                    meal.notes,
+                    meal.skylight_timestamp.isoformat() if meal.skylight_timestamp else None,
+                    now
+                ))
+                meal_id = cursor.lastrowid
+                logger.debug(f"Saved Skylight meal: {meal.name} (id={meal_id})")
+
+            self.conn.commit()
+            return meal_id
+
+        except Exception as e:
+            logger.error(f"Failed to save meal: {e}")
+            raise
+
+    def get_meals(self, date_start=None, date_end=None):
+        """
+        Get meals from database, optionally filtered by date range
+
+        Args:
+            date_start: Start date for filtering (inclusive)
+            date_end: End date for filtering (inclusive)
+
+        Returns:
+            List of MealItem objects
+        """
+        try:
+            from .models import MealItem
+
+            cursor = self.conn.cursor()
+            meals = []
+
+            # Build query with optional date filtering
+            where_clause = "WHERE p.deleted = 0 OR s.deleted = 0"
+            params = []
+
+            if date_start:
+                where_clause += " AND (p.meal_date >= ? OR s.meal_date >= ?)"
+                params.extend([date_start.isoformat(), date_start.isoformat()])
+
+            if date_end:
+                where_clause += " AND (p.meal_date <= ? OR s.meal_date <= ?)"
+                params.extend([date_end.isoformat(), date_end.isoformat()])
+
+            query = f"""
+                SELECT DISTINCT
+                    COALESCE(p.meal_name, s.meal_name) as name,
+                    COALESCE(p.meal_date, s.meal_date) as date,
+                    COALESCE(p.meal_type, s.meal_type) as meal_type,
+                    p.paprika_id,
+                    s.skylight_id,
+                    p.recipe_uid,
+                    COALESCE(p.notes, s.notes) as notes,
+                    p.paprika_timestamp,
+                    s.skylight_timestamp
+                FROM paprika_meals p
+                FULL OUTER JOIN meal_links ml ON p.id = ml.paprika_meal_id
+                FULL OUTER JOIN skylight_meals s ON s.id = ml.skylight_meal_id
+                {where_clause}
+                ORDER BY date, meal_type
+            """
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            for row in rows:
+                # Parse date
+                meal_date = datetime.strptime(row['date'], '%Y-%m-%d').date()
+
+                # Parse timestamps
+                paprika_timestamp = None
+                if row['paprika_timestamp']:
+                    paprika_timestamp = datetime.fromisoformat(row['paprika_timestamp'])
+
+                skylight_timestamp = None
+                if row['skylight_timestamp']:
+                    skylight_timestamp = datetime.fromisoformat(row['skylight_timestamp'])
+
+                meal = MealItem(
+                    name=row['name'],
+                    date=meal_date,
+                    meal_type=row['meal_type'],
+                    paprika_id=row['paprika_id'],
+                    skylight_id=row['skylight_id'],
+                    recipe_uid=row['recipe_uid'],
+                    notes=row['notes'],
+                    paprika_timestamp=paprika_timestamp,
+                    skylight_timestamp=skylight_timestamp
+                )
+                meals.append(meal)
+
+            logger.debug(f"Retrieved {len(meals)} meals from database")
+            return meals
+
+        except Exception as e:
+            logger.error(f"Failed to get meals from database: {e}")
+            raise
+
+    def mark_meal_deleted(self, paprika_id=None, skylight_id=None):
+        """
+        Mark a meal as deleted without actually removing it from the database
+
+        Args:
+            paprika_id: Paprika meal ID to mark as deleted
+            skylight_id: Skylight meal ID to mark as deleted
+        """
+        try:
+            cursor = self.conn.cursor()
+            now = datetime.now(timezone.utc).isoformat()
+
+            if paprika_id:
+                cursor.execute("""
+                    UPDATE paprika_meals
+                    SET deleted = 1, last_synced_at = ?
+                    WHERE paprika_id = ?
+                """, (now, paprika_id))
+                logger.debug(f"Marked Paprika meal as deleted: {paprika_id}")
+
+            if skylight_id:
+                cursor.execute("""
+                    UPDATE skylight_meals
+                    SET deleted = 1, last_synced_at = ?
+                    WHERE skylight_id = ?
+                """, (now, skylight_id))
+                logger.debug(f"Marked Skylight meal as deleted: {skylight_id}")
+
+            self.conn.commit()
+
+        except Exception as e:
+            logger.error(f"Failed to mark meal as deleted: {e}")
+            raise

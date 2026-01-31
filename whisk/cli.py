@@ -34,7 +34,7 @@ def cmd_setup(args) -> int:
 
 
 def cmd_sync(args) -> int:
-    """One-time sync of configured list pairs"""
+    """One-time sync of configured sync types (lists and/or meals)"""
     from .multi_sync_engine import WhiskSyncEngine
     from .config import ConfigManager
 
@@ -88,11 +88,21 @@ def cmd_sync(args) -> int:
         else:
             # Sync all pairs
             enabled_pairs = sync_engine.get_enabled_pairs()
-            if not enabled_pairs:
-                print("❌ No enabled list pairs found")
+
+            # Check if we have either list pairs OR meal sync enabled
+            if not enabled_pairs and not config.meal_sync_enabled:
+                print("❌ No enabled list pairs found and meal sync is disabled")
+                print("   Either configure list pairs or enable meal sync in configuration")
                 return 1
 
-            print(f"🔄 Syncing {len(enabled_pairs)} list pair(s)...")
+            # Determine what we're syncing
+            sync_description = []
+            if enabled_pairs:
+                sync_description.append(f"{len(enabled_pairs)} list pair(s)")
+            if config.meal_sync_enabled:
+                sync_description.append("meals")
+
+            print(f"🔄 Syncing {' and '.join(sync_description)}...")
             if args.dry_run:
                 print("📋 Dry run mode - no changes will be made")
 
@@ -100,12 +110,27 @@ def cmd_sync(args) -> int:
 
             if result.success:
                 print(f"✅ Sync completed: {result.successful_pairs}/{result.total_pairs} pairs successful")
+
                 if result.total_changes > 0:
                     print(f"   {result.total_changes} total changes made")
                     if args.dry_run:
                         print("   (Dry run - changes were simulated)")
+
+                # Show meal sync results if available
+                if result.meal_sync_result:
+                    meal_changes = result.get_total_meal_changes()
+                    if meal_changes > 0:
+                        print(f"   📅 Meals: {result.meal_sync_result.meals_created.__len__()} created, "
+                             f"{result.meal_sync_result.meals_updated.__len__()} updated, "
+                             f"{result.meal_sync_result.meals_deleted.__len__()} deleted")
+                    else:
+                        print(f"   📅 Meals: No changes needed")
+                elif config.meal_sync_enabled:
+                    print(f"   📅 Meals: Sync disabled")
+
                 if result.total_conflicts_resolved > 0:
                     print(f"   {result.total_conflicts_resolved} conflicts resolved")
+
                 if result.failed_pairs > 0:
                     print(f"⚠️  {result.failed_pairs} pairs had errors:")
                     for error in result.errors:
@@ -194,6 +219,19 @@ def cmd_status(args) -> int:
             if config:
                 enabled_pairs = [p for p in config.list_pairs if p.enabled]
                 print(f"   Syncing: {len(enabled_pairs)} list pair(s)")
+
+                # Show meal sync status
+                if config.meal_sync_enabled:
+                    enabled_meal_types = []
+                    if config.sync_breakfast: enabled_meal_types.append("breakfast")
+                    if config.sync_lunch: enabled_meal_types.append("lunch")
+                    if config.sync_dinner: enabled_meal_types.append("dinner")
+                    if config.sync_snacks: enabled_meal_types.append("snacks")
+
+                    print(f"   Meals: Enabled ({config.meal_sync_days_ahead} days ahead)")
+                    print(f"          Syncing: {', '.join(enabled_meal_types)}")
+                else:
+                    print(f"   Meals: Disabled")
         else:
             print("⏹️ Whisk daemon is not running")
             if 'error' in status:
@@ -339,6 +377,20 @@ def cmd_config(args) -> int:
             config = config_manager.load_config()
             print("⚙️ Current Whisk Configuration:")
             print(f"  Sync interval: {config.sync_interval_seconds} seconds")
+
+            # Meal sync configuration
+            if config.meal_sync_enabled:
+                enabled_meal_types = []
+                if config.sync_breakfast: enabled_meal_types.append("breakfast")
+                if config.sync_lunch: enabled_meal_types.append("lunch")
+                if config.sync_dinner: enabled_meal_types.append("dinner")
+                if config.sync_snacks: enabled_meal_types.append("snacks")
+
+                print(f"  Meal sync: Enabled ({config.meal_sync_days_ahead} days ahead)")
+                print(f"             Types: {', '.join(enabled_meal_types)}")
+            else:
+                print(f"  Meal sync: Disabled")
+
             print(f"  List pairs: {len(config.list_pairs)}")
 
             for i, pair in enumerate(config.list_pairs, 1):
@@ -616,12 +668,12 @@ def create_parser() -> argparse.ArgumentParser:
     """Create the main argument parser"""
     parser = argparse.ArgumentParser(
         prog="whisk",
-        description="Bidirectional sync for Paprika and Skylight grocery lists",
+        description="Sync for Paprika grocery lists and meal plans with Skylight",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  whisk setup                    # Interactive setup wizard
-  whisk sync                     # One-time sync of all pairs
+  whisk setup                    # Interactive setup wizard (lists and/or meals)
+  whisk sync                     # One-time sync of all configured sync types
   whisk sync --list "Groceries"  # Sync specific list pair
   whisk start                    # Start daemon mode
   whisk stop                     # Stop daemon
@@ -669,8 +721,8 @@ For detailed help on any command, use: whisk <command> --help
     # Sync command
     sync_parser = subparsers.add_parser(
         "sync",
-        help="One-time sync of configured list pairs",
-        description="Perform one-time sync of all or specific list pairs"
+        help="One-time sync of configured sync types (lists and/or meals)",
+        description="Perform one-time sync of all configured sync types or specific list pairs"
     )
     sync_parser.add_argument(
         "--list",

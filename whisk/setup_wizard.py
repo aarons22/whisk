@@ -57,34 +57,48 @@ class SetupWizard:
 
     def _run_fresh_setup(self) -> int:
         """Run fresh setup wizard"""
-        print("📝 Step 1: Paprika Credentials")
+        print("📋 Step 1: What would you like to sync?")
+        sync_choices = self._choose_sync_types()
+
+        print("\n📝 Step 2: Paprika Credentials")
         print("Enter your Paprika Recipe Manager account credentials:")
         paprika_creds = self._get_paprika_credentials()
 
-        print("\n📱 Step 2: Skylight Credentials")
+        print("\n📱 Step 3: Skylight Credentials")
         print("Enter your Skylight Calendar account credentials:")
         skylight_creds = self._get_skylight_credentials()
 
-        print("\n🔍 Step 3: Discovering Lists")
-        paprika_lists, skylight_lists = self._discover_lists(paprika_creds, skylight_creds)
+        list_pairs = []
+        if sync_choices['sync_lists']:
+            print("\n🔍 Step 4: Discovering Lists")
+            paprika_lists, skylight_lists = self._discover_lists(paprika_creds, skylight_creds)
 
-        print("\n🔗 Step 3: Configure List Pairs")
-        list_pairs = self._configure_list_pairs(paprika_lists, skylight_lists)
+            print("\n🔗 Step 5: Configure List Pairs")
+            list_pairs = self._configure_list_pairs(paprika_lists, skylight_lists)
+        else:
+            print("\n⏭️ Step 4-5: Skipping list configuration (list sync disabled)")
 
-        print("\n⚙️ Step 4: Sync Preferences")
-        sync_config = self._configure_sync_preferences()
+        print(f"\n⚙️ Step 6: Sync Preferences")
+        sync_config = self._configure_sync_preferences(sync_choices)
 
-        print("\n💾 Step 5: Saving Configuration")
+        print(f"\n💾 Step 7: Saving Configuration")
         config = WhiskConfig(
             list_pairs=list_pairs,
             sync_interval_seconds=sync_config['interval'],
+            # Meal sync options
+            meal_sync_enabled=sync_config.get('meal_sync_enabled', True),
+            meal_sync_days_ahead=sync_config.get('meal_sync_days_ahead', 14),
+            sync_breakfast=sync_config.get('sync_breakfast', True),
+            sync_lunch=sync_config.get('sync_lunch', True),
+            sync_dinner=sync_config.get('sync_dinner', True),
+            sync_snacks=sync_config.get('sync_snacks', True),
             **paprika_creds,
             **skylight_creds
         )
 
         self.config_manager.save_config(config)
 
-        print("\n🧪 Step 6: Testing Configuration")
+        print(f"\n🧪 Step 8: Testing Configuration")
         success = self._test_configuration(config)
 
         if success:
@@ -100,6 +114,35 @@ class SetupWizard:
             print("\n⚠️ Setup completed but configuration test failed")
             print("You may need to verify your credentials and try again.")
             return 1
+
+    def _choose_sync_types(self) -> Dict[str, bool]:
+        """Ask user what types of syncing they want"""
+        print("Whisk can sync two types of data:")
+        print("  🛒 Grocery Lists (bidirectional sync between Paprika and Skylight)")
+        print("  📅 Meal Plans (one-way sync from Paprika to Skylight calendar)")
+        print()
+
+        choices = {}
+
+        # Ask about grocery list sync
+        choices['sync_lists'] = input("Enable grocery list sync? (Y/n): ").strip().lower() in ('', 'y', 'yes')
+
+        # Ask about meal sync
+        choices['sync_meals'] = input("Enable meal plan sync? (Y/n): ").strip().lower() in ('', 'y', 'yes')
+
+        # Validate at least one is selected
+        if not choices['sync_lists'] and not choices['sync_meals']:
+            print("\n❌ You must enable at least one sync type.")
+            print("Let's try again...\n")
+            return self._choose_sync_types()
+
+        print()
+        if choices['sync_lists']:
+            print("✅ Grocery list sync will be enabled")
+        if choices['sync_meals']:
+            print("✅ Meal plan sync will be enabled")
+
+        return choices
 
     def _get_paprika_credentials(self) -> Dict[str, str]:
         """Get and validate Paprika credentials"""
@@ -358,7 +401,7 @@ class SetupWizard:
                 return list_name
             print("❌ List name cannot be empty")
 
-    def _configure_sync_preferences(self) -> Dict[str, Any]:
+    def _configure_sync_preferences(self, sync_choices: Dict[str, bool]) -> Dict[str, Any]:
         """Configure sync preferences"""
         print("⏱️ Sync interval (how often to check for changes):")
         print("  1. 30 seconds (frequent)")
@@ -395,8 +438,36 @@ class SetupWizard:
             else:
                 print("❌ Please enter 1, 2, 3, 4, or 5")
 
+        # Meal sync configuration
+        meal_config = {
+            'meal_sync_enabled': sync_choices.get('sync_meals', False),
+            'meal_sync_days_ahead': 14,
+            'sync_breakfast': True,
+            'sync_lunch': True,
+            'sync_dinner': True,
+            'sync_snacks': True
+        }
+
+        if sync_choices.get('sync_meals', False):
+            print("\n📅 Meal sync configuration (Paprika → Skylight calendar):")
+            # Configure days ahead
+            try:
+                days = input(f"Sync meals how many days ahead? (default 14): ").strip()
+                if days:
+                    meal_config['meal_sync_days_ahead'] = max(1, int(days))
+            except ValueError:
+                print("Using default: 14 days")
+
+            # Configure meal types
+            print("\nWhich meal types to sync? (y/N for each):")
+            meal_config['sync_breakfast'] = input("  Breakfast: ").strip().lower() in ('y', 'yes', '')
+            meal_config['sync_lunch'] = input("  Lunch: ").strip().lower() in ('y', 'yes', '')
+            meal_config['sync_dinner'] = input("  Dinner: ").strip().lower() in ('y', 'yes', '')
+            meal_config['sync_snacks'] = input("  Snacks: ").strip().lower() in ('y', 'yes', '')
+
         return {
-            'interval': interval
+            'interval': interval,
+            **meal_config
         }
 
     def _test_configuration(self, config: WhiskConfig) -> bool:

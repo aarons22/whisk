@@ -3,6 +3,7 @@ Multi-List Sync Engine for Whisk
 
 Handles bidirectional synchronization between multiple Paprika ↔ Skylight list pairs
 with independent conflict resolution and state management per pair.
+Also handles one-way meal sync from Paprika to Skylight.
 """
 
 import logging
@@ -17,6 +18,7 @@ from .state_manager import StateManager
 from .item_linker import ItemLinker
 from .conflict_resolver import ConflictResolver, create_conflict_resolver_config
 from .config import WhiskConfig, ListPairConfig
+from .meal_sync_engine import MealSyncEngine, MealSyncResult
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +53,12 @@ class ListPairSyncResult:
 
 
 class MultiListSyncResult:
-    """Result of syncing all configured list pairs"""
+    """Result of syncing all configured list pairs and meals"""
 
     def __init__(self):
         self.success = False
         self.pair_results: List[ListPairSyncResult] = []
+        self.meal_sync_result: Optional[MealSyncResult] = None
         self.total_pairs = 0
         self.successful_pairs = 0
         self.failed_pairs = 0
@@ -80,6 +83,27 @@ class MultiListSyncResult:
 
         # Update overall success - true if at least one pair succeeded
         self.success = self.successful_pairs > 0
+
+    def add_meal_sync_result(self, meal_result: MealSyncResult):
+        """Add result from meal sync"""
+        self.meal_sync_result = meal_result
+        if meal_result.success:
+            self.total_changes += meal_result.get_total_changes()
+        else:
+            if meal_result.error:
+                self.errors.append(f"Meal sync: {meal_result.error}")
+
+        # Update overall success - consider meal sync success when no list pairs
+        if self.total_pairs == 0:
+            # No list pairs configured, success depends only on meal sync
+            self.success = meal_result.success
+        else:
+            # List pairs configured, success if either pairs or meals succeeded
+            self.success = self.successful_pairs > 0 or (meal_result and meal_result.success)
+
+    def get_total_meal_changes(self) -> int:
+        """Get total number of meal changes"""
+        return self.meal_sync_result.get_total_changes() if self.meal_sync_result else 0
 
 
 class WhiskSyncEngine:
@@ -167,14 +191,34 @@ class WhiskSyncEngine:
             pair_result = self._sync_single_pair(pair, dry_run)
             result.add_pair_result(pair_result)
 
+        # Sync meals if enabled
+        if self.config.meal_sync_enabled:
+            logger.info("Syncing meals from Paprika to Skylight...")
+            meal_sync_engine = MealSyncEngine(
+                self.paprika_client,
+                self.skylight_client,
+                self.config,
+                self.state_manager
+            )
+            meal_result = meal_sync_engine.sync_meals(dry_run)
+            result.add_meal_sync_result(meal_result)
+        else:
+            logger.info("Meal sync disabled in configuration")
+
         # Calculate final timing
         result.sync_duration = (datetime.now() - start_time).total_seconds()
 
         # Log summary
         if result.success:
-            logger.info(f"✅ Sync completed: {result.successful_pairs}/{result.total_pairs} pairs successful, "
-                       f"{result.total_changes} changes, {result.total_conflicts_resolved} conflicts resolved "
-                       f"({result.sync_duration:.1f}s)")
+            summary = f"✅ Sync completed: {result.successful_pairs}/{result.total_pairs} pairs successful, "
+            summary += f"{result.total_changes} total changes, {result.total_conflicts_resolved} conflicts resolved"
+
+            if result.meal_sync_result:
+                meal_changes = result.get_total_meal_changes()
+                summary += f", {meal_changes} meal changes"
+
+            summary += f" ({result.sync_duration:.1f}s)"
+            logger.info(summary)
         else:
             logger.error(f"❌ Sync failed: {result.failed_pairs}/{result.total_pairs} pairs failed")
 

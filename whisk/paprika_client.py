@@ -450,3 +450,60 @@ class PaprikaClient:
         except Exception as e:
             logger.error(f"Failed to remove item from Paprika: {e}")
             raise
+
+    def get_meal_plans(self, start_date, end_date):
+        """
+        Get meal plans for a date range from Paprika
+
+        Args:
+            start_date: datetime.date object for start of range
+            end_date: datetime.date object for end of range
+
+        Returns:
+            List of meal plan dictionaries
+        """
+        try:
+            logger.debug(f"Fetching meal plans from Paprika: {start_date} to {end_date}")
+
+            # Try the most likely endpoint based on existing patterns
+            result = self._make_request("GET", "/v2/sync/meals/")
+            meals = result.get("result", [])
+
+            # Filter meals by date range
+            filtered_meals = []
+            for meal in meals:
+                meal_date_str = meal.get("date")
+                if meal_date_str:
+                    try:
+                        # Parse date string - handle both YYYY-MM-DD and YYYY-MM-DD HH:MM:SS formats
+                        from datetime import datetime
+                        date_str = meal_date_str.split(' ')[0]  # Take only the date part
+                        meal_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+
+                        # Check if meal is within date range
+                        if start_date <= meal_date <= end_date:
+                            # Parse timestamp if available
+                            timestamp = None
+                            updated_at = meal.get("updated_at") or meal.get("created_at")
+                            if updated_at:
+                                try:
+                                    timestamp_str = updated_at.replace("Z", "+00:00")
+                                    timestamp = datetime.fromisoformat(timestamp_str)
+                                except Exception as e:
+                                    logger.warning(f"Failed to parse meal timestamp: {e}")
+
+                            # Add parsed timestamp to meal data
+                            meal_copy = meal.copy()
+                            meal_copy["parsed_timestamp"] = timestamp
+                            meal_copy["parsed_date"] = meal_date
+                            filtered_meals.append(meal_copy)
+
+                    except ValueError as e:
+                        logger.warning(f"Failed to parse meal date '{meal_date_str}': {e}")
+
+            logger.info(f"Retrieved {len(filtered_meals)} meal plans from Paprika")
+            return filtered_meals
+
+        except Exception as e:
+            logger.error(f"Failed to get meal plans from Paprika: {e}")
+            raise
