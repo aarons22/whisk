@@ -110,10 +110,9 @@ class MealSyncEngine:
                 logger.debug("Comparing with database state...")
                 self._apply_meal_changes(paprika_meals, skylight_meals, result)
             else:
-                # Dry run - just log what would be done
-                logger.info(f"Dry run: Would sync {len(paprika_meals)} meals from Paprika")
-                for meal in paprika_meals:
-                    logger.info(f"  - {meal.name} on {meal.date} ({meal.meal_type})")
+                # Dry run - show what would be done including meal combinations
+                logger.info(f"Dry run: Would sync meals from Paprika")
+                self._show_dry_run_preview(paprika_meals)
 
             result.success = True
             logger.info(f"✅ Meal sync completed: {result.get_total_changes()} changes, "
@@ -212,11 +211,90 @@ class MealSyncEngine:
 
         return filtered_meals
 
+    def _combine_paprika_meals(self, meals: List[MealItem]) -> MealItem:
+        """
+        Combine multiple meals of same type into single meal
+
+        Args:
+            meals: List of meals with same date and meal_type
+
+        Returns:
+            Single combined MealItem
+        """
+        if len(meals) == 1:
+            return meals[0]
+
+        # Sort by timestamp to get deterministic order
+        sorted_meals = sorted(meals, key=lambda m: m.paprika_timestamp or datetime.min)
+
+        # Use first meal as base
+        primary = sorted_meals[0]
+
+        # Combine names with + separator (user preference: no truncation)
+        names = [meal.name for meal in sorted_meals]
+        combined_name = " + ".join(names)
+
+        # Combine notes if any
+        notes_parts = []
+        for meal in sorted_meals:
+            if meal.notes:
+                notes_parts.append(f"{meal.name}: {meal.notes}")
+        combined_notes = " | ".join(notes_parts) if notes_parts else primary.notes
+
+        # Use most recent timestamp
+        latest_timestamp = max((m.paprika_timestamp for m in sorted_meals if m.paprika_timestamp),
+                              default=primary.paprika_timestamp)
+
+        logger.info(f"Combined {len(meals)} {primary.meal_type} meals for {primary.date}: {combined_name}")
+
+        return MealItem(
+            name=combined_name,
+            date=primary.date,
+            meal_type=primary.meal_type,
+            paprika_id=primary.paprika_id,  # Keep primary ID
+            recipe_uid=primary.recipe_uid,
+            notes=combined_notes,
+            paprika_timestamp=latest_timestamp,
+            skylight_id=primary.skylight_id,
+            skylight_timestamp=primary.skylight_timestamp
+        )
+
+    def _show_dry_run_preview(self, paprika_meals: List[MealItem]) -> None:
+        """Show dry run preview including meal combinations"""
+        # Group meals like we do in actual sync
+        paprika_groups = {}
+        for meal in paprika_meals:
+            key = f"{meal.date}_{meal.meal_type}"
+            if key not in paprika_groups:
+                paprika_groups[key] = []
+            paprika_groups[key].append(meal)
+
+        total_groups = len(paprika_groups)
+        total_meals = len(paprika_meals)
+
+        if total_meals != total_groups:
+            logger.info(f"Dry run: Would sync {total_meals} individual meals → {total_groups} Skylight entries")
+        else:
+            logger.info(f"Dry run: Would sync {total_meals} meals (no combinations needed)")
+
+        for key, meals in sorted(paprika_groups.items()):
+            if len(meals) == 1:
+                meal = meals[0]
+                logger.info(f"  - {meal.name} on {meal.date} ({meal.meal_type})")
+            else:
+                # Show combination preview
+                names = [meal.name for meal in meals]
+                combined_name = " + ".join(names)
+                meal_date = meals[0].date
+                meal_type = meals[0].meal_type
+                logger.info(f"  - COMBINED: {combined_name} on {meal_date} ({meal_type}) [{len(meals)} meals]")
+
     def _apply_meal_changes(self, paprika_meals: List[MealItem],
                            skylight_meals: List[MealItem],
                            result: MealSyncResult) -> None:
         """
         Apply meal changes from Paprika to Skylight (one-way sync)
+        Handles multiple meals per type by combining them.
 
         Args:
             paprika_meals: Current meals from Paprika
@@ -235,29 +313,44 @@ class MealSyncEngine:
                 key = f"{meal.date}_{meal.meal_type}"
                 skylight_lookup[key] = meal
 
-            # Process each Paprika meal
-            for paprika_meal in paprika_meals:
-                key = f"{paprika_meal.date}_{paprika_meal.meal_type}"
+            # Group Paprika meals by date + meal_type to handle multiple meals per type
+            paprika_groups = {}
+            for meal in paprika_meals:
+                key = f"{meal.date}_{meal.meal_type}"
+                if key not in paprika_groups:
+                    paprika_groups[key] = []
+                paprika_groups[key].append(meal)
+
+            # Process each group (may contain multiple meals)
+            processed_meals = []
+            for key, meals in paprika_groups.items():
+                if len(meals) == 1:
+                    # Single meal - use existing logic
+                    processed_meal = meals[0]
+                else:
+                    # Multiple meals - combine them
+                    processed_meal = self._combine_paprika_meals(meals)
+
+                processed_meals.append(processed_meal)
+
+                # Check against existing Skylight meal
                 existing_skylight = skylight_lookup.get(key)
 
                 if existing_skylight:
                     # Check if update is needed
-                    if existing_skylight.name != paprika_meal.name:
-                        self._update_skylight_meal(existing_skylight, paprika_meal)
-                        result.meals_updated.append(paprika_meal.name)
+                    if existing_skylight.name != processed_meal.name:
+                        self._update_skylight_meal(existing_skylight, processed_meal)
+                        result.meals_updated.append(processed_meal.name)
                 else:
                     # Create new meal in Skylight
-                    self._create_skylight_meal(paprika_meal)
-                    result.meals_created.append(paprika_meal.name)
+                    self._create_skylight_meal(processed_meal)
+                    result.meals_created.append(processed_meal.name)
 
-                # Save meal state to database
-                self.state_manager.save_meal(paprika_meal)
+                # Save processed meal state to database
+                self.state_manager.save_meal(processed_meal)
 
-            # Handle deleted meals (meals in Skylight but not in Paprika)
-            paprika_lookup = {}
-            for meal in paprika_meals:
-                key = f"{meal.date}_{meal.meal_type}"
-                paprika_lookup[key] = meal
+            # Handle deleted meals (meals in Skylight but not in processed Paprika groups)
+            paprika_lookup = {f"{meal.date}_{meal.meal_type}": meal for meal in processed_meals}
 
             for meal in skylight_meals:
                 key = f"{meal.date}_{meal.meal_type}"
