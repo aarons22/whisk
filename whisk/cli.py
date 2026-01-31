@@ -604,6 +604,7 @@ def cmd_toggle_list_pair(config_manager, pair_number: int) -> int:
 def cmd_upgrade(args) -> int:
     """Upgrade Whisk to the latest version"""
     import subprocess
+    import sys
     import os
     import requests
     import json
@@ -634,16 +635,50 @@ def cmd_upgrade(args) -> int:
 
             # Reinstall dependencies
             print("📦 Updating dependencies...")
+
+            # Check if we're in a virtual environment
+            in_venv = (
+                hasattr(sys, 'real_prefix') or  # virtualenv
+                (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix)  # venv
+            )
+
+            # Determine the correct pip install command
+            if in_venv:
+                # In virtual environment - safe to install normally
+                pip_cmd = ["python3", "-m", "pip", "install", "-e", "."]
+            else:
+                # Not in virtual environment - try with --user first
+                pip_cmd = ["python3", "-m", "pip", "install", "--user", "-e", "."]
+
             result = subprocess.run(
-                ["python3", "-m", "pip", "install", "--user", "-e", "."],
+                pip_cmd,
                 cwd=whisk_dir,
                 capture_output=True,
                 text=True
             )
 
             if result.returncode != 0:
-                print(f"❌ Failed to update dependencies: {result.stderr}")
-                return 1
+                # If --user failed with externally-managed-environment, try --break-system-packages
+                if not in_venv and "externally-managed-environment" in result.stderr:
+                    print("⚠️  System Python is externally managed. Trying with --break-system-packages...")
+                    pip_cmd_fallback = ["python3", "-m", "pip", "install", "--break-system-packages", "-e", "."]
+                    result = subprocess.run(
+                        pip_cmd_fallback,
+                        cwd=whisk_dir,
+                        capture_output=True,
+                        text=True
+                    )
+
+                    if result.returncode != 0:
+                        print(f"❌ Failed to update dependencies: {result.stderr}")
+                        print("💡 Consider installing Whisk in a virtual environment:")
+                        print("   python3 -m venv ~/.whisk-venv")
+                        print("   source ~/.whisk-venv/bin/activate")
+                        print("   pip install -e ~/.whisk")
+                        return 1
+                else:
+                    print(f"❌ Failed to update dependencies: {result.stderr}")
+                    return 1
 
             print("✅ Whisk upgraded successfully!")
             print("🔄 Changes will take effect immediately.")
