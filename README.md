@@ -1,8 +1,24 @@
 # Whisk 🥄
 
-**Keep your grocery lists in sync between Paprika and Skylight**
+**Keep your grocery lists and meal plans in sync between Paprika and Skylight**
 
-Whisk automatically syncs your grocery lists between Paprika Recipe Manager and Skylight Calendar. Add an item on your phone, see it on your kitchen display. Check it off on Skylight, it disappears from Paprika. Simple as that.
+Whisk automatically syncs your grocery lists and meal plans between Paprika Recipe Manager and Skylight Calendar. Add an item on your phone, see it on your kitchen display. Plan a meal in Paprika, see it on your Skylight calendar. Check off items, and they disappear from both devices. Simple as that.
+
+## Features
+
+### 📝 Grocery List Sync
+- **Bidirectional sync** between Paprika grocery lists and Skylight lists
+- **Multiple list support** - sync as many list pairs as you want
+- **Real-time updates** - changes sync every minute
+- **Smart conflict resolution** - handles simultaneous edits gracefully
+
+### 🍽️ Meal Plan Sync
+- **One-way sync** from Paprika meal plans to Skylight calendar
+- **Multiple meal types** - breakfast, lunch, dinner, and snacks
+- **Intelligent combination** - multiple meals of same type combine automatically
+  - Example: "Grilled Salmon + Caesar Salad + Bread" for multiple dinner items
+- **Recipe integration** - syncs both recipe-based and text-only meals
+- **Date range control** - configurable sync window (default: 7 days ahead)
 
 ## Important Notes
 
@@ -30,21 +46,25 @@ curl -sSL https://raw.githubusercontent.com/aarons22/whisk/main/install.bat -o i
    ```bash
    whisk setup
    ```
-   Enter your Paprika and Skylight credentials. Whisk will find your lists automatically.
+   Enter your Paprika and Skylight credentials. Whisk will:
+   - Find your grocery lists automatically
+   - Set up meal sync from Paprika to Skylight
+   - Configure sync preferences (meal types, date range, etc.)
 
 2. **Start syncing:**
    ```bash
    whisk start
    ```
-   That's it! Your lists will sync every minute in the background.
+   That's it! Your lists and meal plans will sync every minute in the background.
 
 3. **Check status:**
    ```bash
    whisk status
    ```
 
-## Adding More Lists
+## Configuration Options
 
+### Grocery Lists
 Want to sync multiple grocery lists? Easy:
 
 ```bash
@@ -52,6 +72,40 @@ whisk lists --add
 ```
 
 This lets you pair up additional lists between Paprika and Skylight.
+
+### Meal Sync Settings
+During setup, you can configure:
+- **Meal types to sync**: breakfast, lunch, dinner, snacks (all enabled by default)
+- **Sync window**: how many days ahead to sync meals (default: 7 days)
+- **Combination behavior**: how multiple meals of same type are handled
+
+**Example meal combinations:**
+- Multiple breakfasts: "Oatmeal + Toast + Coffee"
+- Multiple dinners: "Salmon + Vegetables + Salad"
+
+## How It Works
+
+### Grocery List Sync (Bidirectional)
+```
+📱 Paprika          🔄 Whisk         📺 Skylight
+Add "Milk"     →    Syncs every    →   Shows "Milk"
+Check "Bread"  ←    minute         ←   Check "Bread"
+```
+
+### Meal Plan Sync (Paprika → Skylight)
+```
+📱 Paprika Meal Plan                📺 Skylight Calendar
+Feb 15 Breakfast: Oatmeal      →   Feb 15 Breakfast: "Oatmeal + Toast"
+Feb 15 Breakfast: Toast        ↗
+Feb 15 Dinner: Salmon          →   Feb 15 Dinner: "Salmon + Salad"
+Feb 15 Dinner: Salad           ↗
+```
+
+**Smart Combination Logic:**
+- Multiple meals of same type + date = combined entry
+- Single meals = unchanged
+- Different types = separate entries
+- Preserves meal notes and recipe information
 
 ## Common Commands
 
@@ -72,22 +126,38 @@ whisk upgrade    # Update to latest version
 - Try a manual sync: `whisk sync`
 - Re-run setup if credentials changed: `whisk setup`
 
+**Meal sync issues?**
+- Ensure you have meal plans in Paprika for upcoming dates
+- Check that meal types are enabled in your configuration
+- Verify your Skylight frame has meal calendar functionality enabled
+
+**Multiple meals not combining?**
+- This is expected behavior when meals have different types (breakfast vs lunch)
+- Multiple meals of the same type on the same day will combine automatically
+- Example: 2 breakfast items become "Item1 + Item2"
+
 **Command not found?**
 - Restart your terminal after installation
 - Make sure `~/.local/bin` is in your PATH
 
 **Need help?**
 - Report issues: [GitHub Issues](https://github.com/aarons22/whisk/issues)
+- Check logs for detailed error information
 
 ## Requirements
 
 - Python 3.10+
-- Paprika Recipe Manager account
-- Skylight Calendar with grocery lists enabled
+- **Paprika Recipe Manager account** with:
+  - Grocery lists (for list sync)
+  - Meal planning feature (for meal sync)
+- **Skylight Calendar** with:
+  - Grocery lists functionality enabled
+  - Meal calendar/sitting functionality enabled
+- Stable internet connection for API access
 
 ---
 
-That's it! Whisk runs quietly in the background keeping your lists in sync so you never have to think about it.
+That's it! Whisk runs quietly in the background keeping your grocery lists and meal plans in sync across all your devices. Plan your meals in Paprika, shop with Skylight, and never worry about keeping everything up to date manually.
 
 ## License
 
