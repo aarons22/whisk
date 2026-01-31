@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history for changelog
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -28,13 +30,42 @@ jobs:
       - name: Build package
         run: python -m build
 
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_num=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "Extracted version: ${VERSION}"
+
+      - name: Validate changelog entry
+        run: |
+          if ! grep -q "\[${{ steps.version.outputs.version_num }}\]" CHANGELOG.md; then
+            echo "❌ Error: No changelog entry found for version ${{ steps.version.outputs.version_num }}"
+            echo "Available versions in CHANGELOG.md:"
+            grep "^## \[" CHANGELOG.md || echo "No version entries found"
+            exit 1
+          else
+            echo "✅ Changelog entry found for version ${{ steps.version.outputs.version_num }}"
+          fi
+
       - name: Extract changelog section
         id: changelog
         run: |
+          # Make script executable (in case it wasn't committed as executable)
+          chmod +x ./scripts/extract_changelog.sh
+
           # Extract changelog section for this version
-          ./scripts/extract_changelog.sh ${{ github.ref_name }} > release_notes.md
+          ./scripts/extract_changelog.sh ${{ steps.version.outputs.version }} > release_notes.md
+
           echo "Generated release notes:"
           cat release_notes.md
+
+          # Verify we got content
+          if [ ! -s release_notes.md ]; then
+            echo "❌ Error: No changelog content extracted"
+            exit 1
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
@@ -43,6 +74,8 @@ jobs:
           body_path: release_notes.md
           draft: false
           prerelease: false
+          name: "Release ${{ steps.version.outputs.version }}"
+          tag_name: ${{ steps.version.outputs.version }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -30,9 +30,8 @@ When the user runs `/release [patch|minor|major]`, you should:
    - Ensure proper formatting and version links
 
 5. **Complete git operations**:
-   - Commit the changelog changes
    - Push the version tag
-   - Confirm GitHub Actions will handle the release
+   - GitHub Actions will handle the release automatically
 
 ## Critical Git Synchronization
 
@@ -146,7 +145,7 @@ Provide clear status updates throughout:
 - 🔄 Bumping [type] version...
 - 📝 Generating changelog entries...
 - ✅ Version bumped to [new_version]
-- 🚀 Release v[new_version] completed!
+- 🚀 Release v[new_version] completed! GitHub Actions will handle the rest.
 
 Show the generated changelog entries for user review before finalizing.
 
