@@ -28,5 +28,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bulk operations for efficient sync operations
 - Deletion detection and handling (Paprika → Skylight)
 
-[Unreleased]: https://github.com/aarons22/paprika-skylight/compare/v0.0.1...HEAD
-[0.0.1]: https://github.com/aarons22/paprika-skylight/releases/tag/v0.0.1
+[Unreleased]: https://github.com/aarons22/whisk/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/aarons22/whisk/releases/tag/v0.0.1

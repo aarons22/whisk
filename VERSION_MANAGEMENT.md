@@ -1,73 +1,56 @@
 # Version Management
 
-This project uses automated version management with GitHub releases and human-readable changelogs.
+This project uses AI-powered automated release management through a single Claude Code skill.
 
-## Quick Release Process
+## One Command Releases
 
 ```bash
-# 1. Bump version
-./scripts/bump_version.sh patch
-
-# 2. Update changelog (script will help you)
-# Edit CHANGELOG.md to move items from [Unreleased] to the new version section
-
-# 3. Commit changelog changes
-git add CHANGELOG.md
-git commit --amend --no-edit
-
-# 4. Push the tag
-git push origin v0.0.2
+/release patch    # Bug fixes (0.0.2 → 0.0.3)
+/release minor    # New features (0.0.2 → 0.1.0)
+/release major    # Breaking changes (0.0.2 → 1.0.0)
 ```
 
-## Changelog Format
+## What Happens Automatically
 
-We follow [Keep a Changelog](https://keepachangelog.com/) format:
+The `/release` skill handles everything:
 
+1. **🔍 Analysis**: Examines git diffs and commits since last tag
+2. **📝 Changelog**: Generates human-readable changelog entries
+3. **🔄 Version Bump**: Updates pyproject.toml and creates git tag
+4. **📋 Update**: Updates CHANGELOG.md with new version section
+5. **🚀 Release**: Commits changes, pushes tag, triggers GitHub release
+
+## AI-Generated Changelog
+
+The skill analyzes your actual code changes and generates user-focused entries:
+
+**Input**: Git diffs + commit messages
+**Output**: Professional changelog entries like:
 ```markdown
-## [Unreleased]
 ### Added
-- New features
-
-### Changed
-- Changes to existing functionality
+- Automatic retry mechanism for failed sync operations
+- Better error messages when Skylight authentication fails
 
 ### Fixed
-- Bug fixes
-
-### Removed
-- Removed features
-
-## [0.0.2] - 2025-01-31
-### Added
-- Human-readable changelog system
-- Automated release note extraction
+- Race condition causing duplicate items during bulk sync
+- Network timeout handling in Paprika API calls
 ```
 
-## What Happens
+## Manual Fallback
 
-1. Script updates `pyproject.toml` version and creates git tag
-2. You update `CHANGELOG.md` with human-readable notes
-3. You push the tag: `git push origin v0.0.2`
-4. GitHub Actions extracts the relevant changelog section
-5. Creates release with your human-readable notes + built packages
-
-## Helper Scripts
-
-- `./scripts/update_changelog.sh 0.0.2` - Prepares changelog structure
-- `./scripts/extract_changelog.sh v0.0.2` - Tests changelog extraction
-
-## Manual Process
-
-If you prefer doing it manually:
-
+If needed, you can still use the basic version bump script:
 ```bash
-# Edit version in pyproject.toml and CHANGELOG.md
-# Then:
-git add pyproject.toml CHANGELOG.md
-git commit -m "Bump version to 0.0.2"
-git tag v0.0.2
-git push origin main
-git push origin v0.0.2
+./scripts/bump_version.sh patch
+# Then manually edit CHANGELOG.md
+git add CHANGELOG.md && git commit --amend --no-edit
+git push origin v0.0.3
 ```
 
-The GitHub release will include your human-readable changelog section plus installable packages.
+## Benefits
+
+- **Simple**: Single `/release patch` command
+- **Smart**: AI understands code impact vs implementation details
+- **Consistent**: Professional changelog format every time
+- **Complete**: Handles all git operations automatically
+
+Your release process is now fully automated with intelligent changelog generation!

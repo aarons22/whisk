@@ -1,4 +1,4 @@
-# Paprika-Skylight Sync Implementation Patterns
+# Whisk Sync Implementation Patterns
 
 ## Overview
 This document captures high-level implementation patterns, sync logic decisions, and architectural approaches for the grocery list sync automation.
