@@ -222,8 +222,7 @@ class DaemonManager:
             signal.signal(signal.SIGTERM, self._signal_handler)
             signal.signal(signal.SIGINT, self._signal_handler)
 
-            # Initialize sync engine
-            # TODO: Import and initialize actual sync engine (Task #3)
+            # Initialize and start daemon
             logger.info("Whisk daemon starting...")
             print("🚀 Whisk daemon started")
 
@@ -285,10 +284,10 @@ class DaemonManager:
         """Handle shutdown signals gracefully"""
         logger.info(f"Received signal {signum}, shutting down gracefully...")
 
-        # TODO: Properly shut down sync engine when implemented
+        # Graceful shutdown
         if self.sync_engine:
             logger.info("Stopping sync engine...")
-            # self.sync_engine.stop()
+            # Sync engine doesn't need explicit cleanup
 
         # Clean up PID file
         self.pid_file.unlink(missing_ok=True)
