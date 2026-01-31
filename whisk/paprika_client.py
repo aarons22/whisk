@@ -492,10 +492,22 @@ class PaprikaClient:
                                 except Exception as e:
                                     logger.warning(f"Failed to parse meal timestamp: {e}")
 
-                            # Add parsed timestamp to meal data
+                            # Map numeric type to meal type string
+                            # Based on Paprika API: 0=breakfast, 1=lunch, 2=dinner, 3=snack
+                            type_to_meal_type = {
+                                0: "breakfast",
+                                1: "lunch",
+                                2: "dinner",
+                                3: "snack"
+                            }
+                            numeric_type = meal.get("type", 2)  # Default to dinner (type 2)
+                            meal_type = type_to_meal_type.get(numeric_type, "dinner")
+
+                            # Add parsed fields to meal data
                             meal_copy = meal.copy()
                             meal_copy["parsed_timestamp"] = timestamp
                             meal_copy["parsed_date"] = meal_date
+                            meal_copy["meal_type"] = meal_type  # Add the meal type field
                             filtered_meals.append(meal_copy)
 
                     except ValueError as e:

@@ -656,7 +656,16 @@ class SkylightClient:
                     # Get meal category info
                     meal_category_rel = relationships.get("meal_category", {})
                     meal_category_data = meal_category_rel.get("data") if meal_category_rel else None
-                    meal_category_id = meal_category_data.get("id") if meal_category_data else None
+                    meal_category_id = None
+                    if meal_category_data:
+                        if isinstance(meal_category_data, dict):
+                            meal_category_id = meal_category_data.get("id")
+                        elif isinstance(meal_category_data, list) and meal_category_data:
+                            # Handle case where data is a list
+                            meal_category_id = meal_category_data[0].get("id") if isinstance(meal_category_data[0], dict) else None
+                        else:
+                            logger.warning(f"Unexpected meal_category_data type: {type(meal_category_data)}")
+
                     meal_category_label = None
                     if meal_category_id and meal_category_id in meal_categories:
                         meal_category_label = meal_categories[meal_category_id]["attributes"]["label"]
@@ -664,7 +673,16 @@ class SkylightClient:
                     # Get meal recipe info
                     meal_recipe_rel = relationships.get("meal_recipe", {})
                     meal_recipe_data = meal_recipe_rel.get("data") if meal_recipe_rel else None
-                    meal_recipe_id = meal_recipe_data.get("id") if meal_recipe_data else None
+                    meal_recipe_id = None
+                    if meal_recipe_data:
+                        if isinstance(meal_recipe_data, dict):
+                            meal_recipe_id = meal_recipe_data.get("id")
+                        elif isinstance(meal_recipe_data, list) and meal_recipe_data:
+                            # Handle case where data is a list
+                            meal_recipe_id = meal_recipe_data[0].get("id") if isinstance(meal_recipe_data[0], dict) else None
+                        else:
+                            logger.warning(f"Unexpected meal_recipe_data type: {type(meal_recipe_data)}")
+
                     meal_recipe_summary = None
                     if meal_recipe_id and meal_recipe_id in meal_recipes:
                         meal_recipe_summary = meal_recipes[meal_recipe_id]["attributes"]["summary"]
@@ -796,9 +814,21 @@ class SkylightClient:
             # Extract meal categories from response data
             meal_categories = {}
             for item in categories_data:
+                # Debug: Check what type each item is
+                logger.debug(f"Processing categories item: {item} (type: {type(item)})")
+
+                # Ensure item is a dictionary before calling .get()
+                if not isinstance(item, dict):
+                    logger.warning(f"Expected dict but got {type(item)} for categories item: {item}")
+                    continue
+
                 if item.get("type") == "meal_category":
-                    label = item["attributes"]["label"].lower()
-                    meal_categories[label] = item["id"]
+                    try:
+                        label = item["attributes"]["label"].lower()
+                        meal_categories[label] = item["id"]
+                    except KeyError as e:
+                        logger.warning(f"Missing required field in meal category item: {e}")
+                        continue
 
             logger.debug(f"Available meal categories: {meal_categories}")
 
