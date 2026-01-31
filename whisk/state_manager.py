@@ -578,6 +578,69 @@ class StateManager:
             logger.error(f"Failed to create item link: {e}")
             raise
 
+    def get_linked_items_for_pair(self, paprika_list_uid: str, skylight_list_id: str) -> List[ItemLink]:
+        """
+        Get all linked items for a specific list pair
+
+        Args:
+            paprika_list_uid: Paprika list UID
+            skylight_list_id: Skylight list ID
+
+        Returns:
+            List of ItemLink objects with full item details
+        """
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                SELECT l.*,
+                       p.paprika_id, p.list_uid, p.name as p_name, p.checked as p_checked,
+                       p.last_modified_at as p_modified, p.is_deleted as p_deleted,
+                       s.skylight_id, s.list_id, s.name as s_name, s.checked as s_checked,
+                       s.skylight_updated_at as s_updated
+                FROM item_links l
+                JOIN paprika_items p ON l.paprika_item_id = p.id
+                JOIN skylight_items s ON l.skylight_item_id = s.id
+                WHERE p.list_uid = ? AND s.list_id = ? AND p.is_deleted = 0
+            """, (paprika_list_uid, skylight_list_id))
+
+            links = []
+            for row in cursor.fetchall():
+                link = ItemLink(
+                    id=row['id'],
+                    paprika_item_id=row['paprika_item_id'],
+                    skylight_item_id=row['skylight_item_id'],
+                    linked_at=self._parse_datetime(row['linked_at']),
+                    confidence_score=row['confidence_score']
+                )
+
+                # Attach item details
+                link.paprika_item = PaprikaItem(
+                    id=row['paprika_item_id'],
+                    paprika_id=row['paprika_id'],
+                    list_uid=row['list_uid'],
+                    name=row['p_name'],
+                    checked=bool(row['p_checked']),
+                    last_modified_at=self._parse_datetime(row['p_modified']),
+                    is_deleted=bool(row['p_deleted'])
+                )
+
+                link.skylight_item = SkylightItem(
+                    id=row['skylight_item_id'],
+                    skylight_id=row['skylight_id'],
+                    list_id=row['list_id'],
+                    name=row['s_name'],
+                    checked=bool(row['s_checked']),
+                    skylight_updated_at=self._parse_datetime(row['s_updated'])
+                )
+
+                links.append(link)
+
+            return links
+
+        except Exception as e:
+            logger.error(f"Failed to get linked items for pair: {e}")
+            raise
+
     def get_linked_items_with_conflicts(self) -> List[ItemLink]:
         """Get linked items where Paprika and Skylight have different checked states"""
         try:

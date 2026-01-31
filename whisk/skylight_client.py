@@ -573,42 +573,69 @@ class SkylightClient:
             logger.error(f"Failed to update item in Skylight: {e}")
             raise
 
-    def remove_item(self, skylight_id: str, list_name: str = None) -> None:
+    def bulk_delete_items(self, skylight_ids: List[str], list_name: str) -> None:
         """
-        Remove item from list
+        Remove multiple items from list using bulk destroy endpoint
 
         Args:
-            skylight_id: Skylight ID of the item to remove
-            list_name: Optional list name to search in (REQUIRED for security)
+            skylight_ids: List of Skylight IDs of items to remove
+            list_name: Name of the list to remove items from (REQUIRED for security)
         """
         try:
-            logger.debug(f"Removing item from Skylight: {skylight_id}")
+            if not skylight_ids:
+                logger.debug("No items to delete")
+                return
+
+            logger.debug(f"Bulk removing {len(skylight_ids)} items from Skylight list '{list_name}': {skylight_ids}")
 
             if not list_name:
                 raise ValueError("list_name is required - will not search all lists for security")
 
-            list_id = None
+            # Get the list ID
+            list_id = self.get_list_id_by_name(list_name)
+            if not list_id:
+                raise Exception(f"List '{list_name}' not found")
 
-            # Only search in the specified list (NEVER search other lists)
-            try:
-                target_list_id = self.get_list_id_by_name(list_name)
-                if not target_list_id:
-                    raise Exception(f"List '{list_name}' not found")
+            # Verify all items exist in this specific list (optional validation)
+            existing_items = self.get_list_items(list_name)
+            existing_ids = {item.skylight_id for item in existing_items}
 
-                # Check if item exists in this specific list
-                items = self.get_list_items(list_name)
-                if any(item.skylight_id == skylight_id for item in items):
-                    list_id = target_list_id
-                    logger.debug(f"Found item {skylight_id} in target list '{list_name}'")
+            # Filter out items that don't exist (log warning but don't fail)
+            valid_ids = []
+            for skylight_id in skylight_ids:
+                if skylight_id in existing_ids:
+                    valid_ids.append(skylight_id)
                 else:
-                    raise Exception(f"Item {skylight_id} not found in list '{list_name}'")
+                    logger.warning(f"Item {skylight_id} not found in list '{list_name}' - skipping")
 
-            except Exception as e:
-                raise Exception(f"Cannot remove item {skylight_id}: {e}")
+            if not valid_ids:
+                logger.info("No valid items to delete after validation")
+                return
 
-            # DELETE request
-            self._make_request("DELETE", f"/frames/{self.frame_id}/lists/{list_id}/list_items/{skylight_id}")
-            logger.info(f"Removed item from Skylight list '{list_name}': {skylight_id}")
+            # Use bulk destroy endpoint - the only working deletion method
+            endpoint = f"/frames/{self.frame_id}/lists/{list_id}/list_items/bulk_destroy"
+            payload = {"ids": valid_ids}
+
+            self._make_request("DELETE", endpoint, payload)
+            logger.info(f"Bulk removed {len(valid_ids)} items from Skylight list '{list_name}': {valid_ids}")
+
+        except Exception as e:
+            logger.error(f"Failed to bulk remove items from Skylight: {e}")
+            raise
+
+    def remove_item(self, skylight_id: str, list_name: str = None) -> None:
+        """
+        Remove single item from list (wrapper around bulk delete)
+
+        Args:
+            skylight_id: Skylight ID of the item to remove
+            list_name: Name of the list to search in (REQUIRED for security)
+        """
+        try:
+            logger.debug(f"Removing single item from Skylight: {skylight_id}")
+
+            # Use bulk delete for single item (since individual delete doesn't work)
+            self.bulk_delete_items([skylight_id], list_name)
 
         except Exception as e:
             logger.error(f"Failed to remove item from Skylight: {e}")

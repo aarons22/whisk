@@ -564,13 +564,55 @@ class WhiskSyncEngine:
                               skylight_items: List[ListItem],
                               changes: Dict[str, List[str]]) -> None:
         """Handle items that were deleted from one of the services"""
-        # For now, we'll implement a simplified version that focuses on core functionality
-        # This can be enhanced later to handle deletion detection more robustly
         try:
-            logger.debug("Deletion handling is simplified in this version")
-            # TODO: Implement robust deletion detection
-            # This would require tracking which items existed in previous sync
-            # and comparing with current state
+            logger.debug("Handling deleted items...")
+
+            # Get list UIDs for database queries
+            pair_id = f"{pair.paprika_list}___{pair.skylight_list}"
+            paprika_list_uid = pair_id.split('___')[0]  # Use paprika list name as UID
+            skylight_list_id = pair_id.split('___')[1]  # Use skylight list name as list_id
+
+            # Get all linked items for this pair from database
+            linked_items = self.state_manager.get_linked_items_for_pair(paprika_list_uid, skylight_list_id)
+
+            # Create sets of current item IDs for fast lookup
+            current_paprika_ids = {item.paprika_id for item in paprika_items if item.paprika_id}
+            current_skylight_ids = {item.skylight_id for item in skylight_items if item.skylight_id}
+
+            # Find items that were in database but missing from current API responses
+            deleted_skylight_ids = []
+            deleted_item_names = []
+
+            for link in linked_items:
+                paprika_item = link.paprika_item
+                skylight_item = link.skylight_item
+
+                # Check for Paprika → Skylight deletions
+                # If Paprika item is missing from current response, delete from Skylight
+                if paprika_item and paprika_item.paprika_id not in current_paprika_ids:
+                    if skylight_item and skylight_item.skylight_id:
+                        deleted_skylight_ids.append(skylight_item.skylight_id)
+                        deleted_item_names.append(paprika_item.name)
+                        logger.debug(f"Item '{paprika_item.name}' deleted from Paprika, will remove from Skylight")
+
+            # Bulk delete items from Skylight if any found
+            if deleted_skylight_ids:
+                logger.info(f"Found {len(deleted_skylight_ids)} items deleted from Paprika, removing from Skylight")
+                try:
+                    self.skylight_client.bulk_delete_items(deleted_skylight_ids, pair.skylight_list)
+                    changes['skylight_deleted'].extend(deleted_item_names)
+                    logger.info(f"Successfully deleted {len(deleted_skylight_ids)} items from Skylight")
+                except Exception as e:
+                    logger.error(f"Failed to bulk delete items from Skylight: {e}")
+                    # Continue processing - don't fail entire sync for deletion failures
+
+            # Note: We only handle Paprika → Skylight deletions because:
+            # 1. Paprika doesn't support true deletion (only marking as purchased)
+            # 2. The focus is on handling items deleted from Paprika appearing in Skylight
+            # 3. This matches the plan requirements
+
+            logger.debug(f"Deletion handling completed: {len(deleted_skylight_ids)} items removed from Skylight")
+
         except Exception as e:
             logger.error(f"Failed to handle deleted items: {e}")
             raise
