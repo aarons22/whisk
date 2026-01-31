@@ -2,6 +2,26 @@
 
 This document contains real API request/response examples for both Paprika Recipe Manager and Skylight Calendar APIs. This serves as the authoritative reference for API structure and prevents dependency on code comments.
 
+For high-level implementation patterns and sync logic, refer to `./CLAUDE.md`.
+
+---
+
+## Critical API Discoveries
+
+### Paprika Key Findings
+- **V1 Authentication Required**: V2 can trigger "Unrecognized client" errors
+- **HTTP Basic Auth + Form Data**: Unique authentication pattern
+- **Gzip Response Handling**: Some responses compressed, some not
+- **No True Deletion**: Only soft delete via `purchased=True` supported
+- **Client UUID Generation**: Must generate UUID4 (uppercase) for new items
+
+### Skylight Key Findings
+- **Individual Deletion Broken**: Standard REST DELETE /items/{id} non-functional
+- **Bulk Destroy Works**: Only `/list_items/bulk_destroy` endpoint functional for deletion
+- **JSON:API Format**: All requests/responses follow JSON:API specification
+- **Base64 Token Format**: Must encode as `base64(user_id:auth_token)`
+- **Frame-Scoped Operations**: All operations require correct frame_id
+
 ---
 
 ## Paprika Recipe Manager API
@@ -406,17 +426,33 @@ Content-Type: application/json
 }
 ```
 
-#### Delete List Item
+#### Delete List Item (Individual - Non-functional)
 **Request:**
 ```http
 DELETE /frames/{frameId}/lists/{listId}/items/{itemId}
 Authorization: Token token="<base64_token>"
 ```
 
+**Status:** ❌ **NOT WORKING** - Endpoint exists but deletion does not occur
+
+#### Bulk Delete List Items (Working Solution)
+**Request:**
+```http
+DELETE /frames/{frameId}/lists/{listId}/list_items/bulk_destroy
+Authorization: Token token="<base64_token>"
+Content-Type: application/json
+
+{
+  "ids": ["item_id_1", "item_id_2", "item_id_3"]
+}
+```
+
 **Response:**
 ```http
 200 OK
 ```
+
+**Note:** Only the bulk destruction endpoint is functional for deleting items.
 
 ---
 
@@ -583,12 +619,18 @@ Authorization: Token token="<base64_token>"
 3. **Client-Generated IDs**: Must generate UUID4 (uppercase) for new items
 4. **Soft Delete Only**: True deletion not supported, use `purchased: true`
 5. **Rate Limits**: Unknown - recommend 60+ second intervals
+6. **Multiple Lists**: Must filter items by `list_uid` client-side
+7. **Unofficial API**: May break with app updates, no official documentation
+8. **Token Expiration**: Unknown duration - handle 401 gracefully
+9. **Aisle Auto-Assignment**: Server assigns aisles based on `ingredient`/`name` - leave `aisle` field empty when creating
+10. **Preserve Aisles**: Don't overwrite aisle field when syncing - only sync `name`, `purchased`, timestamps
 
 ### Skylight Specific
 1. **JSON:API Format**: All responses follow JSON:API specification
 2. **Include Parameter**: Use `?include=` for relationship data
 3. **Date Filtering**: Use `filter[date_from]` and `filter[date_to]` parameters
 4. **Meal Categories**: Must map meal types to category IDs via `/meals/categories`
+5. **Individual Deletion Broken**: Only bulk destroy endpoint works for list item deletion
 
 ### Common Patterns
 - Both APIs use bearer token authentication
@@ -621,6 +663,18 @@ Authorization: Token token="<base64_token>"
 
 **Paprika 404 on DELETE:**
 - True deletion not supported, use soft delete
+
+**Paprika gzip compression issues:**
+- Check for gzip magic bytes `\x1f\x8b` before decompressing
+- Some responses are not compressed
+
+**Paprika error responses:**
+- Standard format: `{"error": {"code": 0, "message": "Invalid data."}}`
+- Success responses: GET returns `{"result": [...]}`, POST returns `{"result": true}`
+
+**Skylight Individual Delete Fails:**
+- Individual DELETE /items/{id} endpoint non-functional
+- Use bulk_destroy endpoint instead with array of IDs
 
 **Skylight 404 on meal operations:**
 - Check frame_id is correct

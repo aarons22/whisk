@@ -1,406 +1,54 @@
 # Paprika-Skylight Sync Implementation Patterns
 
 ## Overview
-This document captures implementation patterns, API research findings, and technical decisions for the grocery list sync automation.
+This document captures high-level implementation patterns, sync logic decisions, and architectural approaches for the grocery list sync automation.
+
+For detailed API reference (endpoints, request/response formats, error codes), refer to `./API_REFERENCE.md`.
+
+**IMPORTANT** - If you learn about new API structures or examples, you should update the API_REFERENCE.md file accordingly.
 
 ---
 
-## Paprika API Patterns
-
-### Authentication
-
-**V1 Authentication (Implemented):**
-- Endpoint: `https://www.paprikaapp.com/api/v1/account/login/`
-- Method: POST
-- **Authentication:** HTTP Basic Auth (email/password) + form data
-- Returns: `{"result": {"token": "bearer_token_here"}}`
-- More stable than V2, avoids "Unrecognized client" errors
-
-**Implementation:**
-```python
-from requests.auth import HTTPBasicAuth
-
-auth = HTTPBasicAuth(email, password)
-data = {"email": email, "password": password}
-response = requests.post(url, data=data, auth=auth)
-token = response.json()["result"]["token"]
-```
-
-**V2 Authentication (Avoid):**
-- Endpoint: `https://www.paprikaapp.com/api/v2/account/login/`
-- Can trigger "Unrecognized client" errors on repeated auth
-- Not recommended for programmatic access
-
-### Token Management
-1. Cache bearer token to file (`.paprika_token`)
-2. Set restrictive permissions: `chmod 600`
-3. Reuse cached token until 401 response
-4. Re-authenticate only on token expiration
-5. Token format in headers: `Authorization: Bearer {token}`
-
-### Grocery Lists Discovery
-
-**Critical Discovery:** Paprika supports multiple named grocery lists.
-
-**Endpoint:** `GET /api/v2/sync/grocerylists/`
-
-**Response:**
-```json
-{
-  "result": [
-    {
-      "uid": "A35D5BB9-3EB3-4DE0-A883-CD786E8564FB",
-      "name": "Test List",
-      "order_flag": 13,
-      "is_default": false,
-      "reminders_list": "Test List"
-    },
-    {
-      "uid": "9E12FCF54A89FC52EA8E1C5DA1BDA62A6617ED8BDC2AEB6F291B93C7A399F6F6",
-      "name": "My Grocery List",
-      "order_flag": 0,
-      "is_default": true,
-      "reminders_list": "Paprika"
-    }
-  ]
-}
-```
-
-**Usage:**
-- Query this endpoint to get list UIDs
-- Cache results (lists don't change frequently)
-- Use `list_uid` when creating/updating items
-- Required to target specific grocery lists
-
-### Grocery Item Operations
-
-**Read Items:** `GET /api/v2/sync/groceries/`
-
-**Response Characteristics:**
-- Returns ALL items from ALL grocery lists
-- May or may not be gzip compressed
-- Filter by `list_uid` field to get items from specific list
-- Response format: `{"result": [...]}`
-
-**Item Structure (Complete):**
-```json
-{
-  "uid": "61DFC31A-BCBF-4912-81E3-EEF8B061DFE2",
-  "recipe_uid": null,
-  "name": "flour",
-  "order_flag": 231,
-  "purchased": true,
-  "aisle": "Baking Goods",
-  "ingredient": "flour",
-  "recipe": null,
-  "instruction": "",
-  "quantity": "",
-  "separate": false,
-  "aisle_uid": "12304D0F1A64F772E413322BD03445ADD546F7528D9628F999DBEE3B7C7819B7",
-  "list_uid": "A25907D8-06EE-44AD-A4C7-9E50EE2B4D2C-26639-0000075C3E316007"
-}
-```
-
-**Key Fields:**
-- `uid`: Item unique ID (client-generated UUID4, uppercase)
-- `name`: Item name
-- `purchased`: Boolean - checked/purchased status
-- `aisle`: Auto-assigned by Paprika based on `ingredient` or `name`
-- `ingredient`: Lowercase version of item name
-- `list_uid`: **Required** - specifies which grocery list item belongs to
-- `updated_at` or `created`: Timestamp for change tracking
-
-### Creating/Updating Items
-
-**Critical Requirements:**
-1. Data must be gzip-compressed JSON **array** (not object)
-2. Send as multipart/form-data with field name `data`
-3. Include all required fields
-4. Must specify `list_uid` to target correct list
-5. Client must generate UUID for new items
-
-**Endpoint:** `POST /api/v2/sync/groceries/`
-
-**Python Implementation:**
-```python
-import gzip
-import json
-import uuid
-
-# Generate UID for new item
-item_uid = str(uuid.uuid4()).upper()
-
-# Create item with ALL fields
-grocery_items = [{
-    "uid": item_uid,
-    "recipe_uid": None,
-    "name": "Milk",
-    "order_flag": 0,
-    "purchased": False,
-    "aisle": "",  # Leave empty - Paprika auto-assigns
-    "ingredient": "milk",  # Lowercase name
-    "recipe": None,
-    "instruction": "",
-    "quantity": "",
-    "separate": False,
-    "list_uid": "YOUR-LIST-UID-HERE"  # REQUIRED
-}]
-
-# Gzip compress
-json_data = json.dumps(grocery_items).encode('utf-8')
-compressed_data = gzip.compress(json_data)
-
-# Send as multipart form
-files = {'data': ('data', compressed_data, 'application/octet-stream')}
-headers = {'Authorization': f'Bearer {token}'}
-response = requests.post(url, files=files, headers=headers)
-
-# Success response: {"result": true}
-```
-
-**Updating Items:**
-- Use same POST endpoint and format
-- Include existing `uid` in the item object
-- Paprika updates item with matching UID
-- Include full item structure (fetch first, modify, then upload)
-
-### Deletion Behavior
-
-**Critical Discovery:** True deletion NOT supported.
-
-**DELETE Endpoint:** `DELETE /api/v2/sync/groceries/{uid}` returns 404
-
-**Workaround:**
-- Mark items as `purchased=True` to "soft delete"
-- Items remain in list but appear as checked/purchased
-- For sync: Track deleted items in local DB to avoid recreating
-
-**Implications:**
-- Deleted items still sync across devices as purchased
-- Users must manually delete via Paprika app for true removal
-- Sync engine should not recreate items marked as deleted
-
-### Aisle Auto-Assignment
-
-**Behavior:**
-- Paprika automatically categorizes items by aisle
-- Based on `ingredient` or `name` field
-- Happens server-side when item created/updated
-- Leave `aisle` field empty ("") when creating
-
-**Important:**
-- Do NOT overwrite aisle when syncing from Skylight
-- Preserve Paprika's aisle assignments
-- Only sync `name`, `purchased`, and timestamps
-
-### Response Handling
-
-**Gzip Compression:**
-- Responses MAY be gzip compressed (not always)
-- Check for gzip magic bytes: `\x1f\x8b`
-- Gracefully handle both compressed and uncompressed
-
-**Success Responses:**
-- GET: `{"result": [...]}`
-- POST: `{"result": true}`
-
-**Error Responses:**
-- `{"error": {"code": 0, "message": "Invalid data."}}`
-- HTTP 401: Token expired, re-authenticate
-- HTTP 404: Item/endpoint not found
-
-### Custom Implementation
-
-**Why Custom Client:**
-- Kappari library doesn't expose grocery operations in public API
-- Need full control over list targeting and item structure
-- Simpler dependencies (just `requests` library)
-- Direct access to reverse-engineered API
-
-**Implementation:**
-```python
-from paprika_client import PaprikaClient
-
-client = PaprikaClient(email, password)
-client.authenticate()  # V1 auth with token caching
-
-# Get available lists
-lists = client.get_grocery_lists()
-# Returns: [{"uid": "...", "name": "Test List", ...}, ...]
-
-# Get list UID by name
-list_uid = client.get_list_uid_by_name("Test List")
-
-# Get items from specific list (filters by list_uid)
-items = client.get_grocery_list("Test List")
-
-# Add item to specific list
-uid = client.add_item(name="Milk", checked=False, list_name="Test List")
-
-# Update checked status
-client.update_item(paprika_id=uid, checked=True)
-
-# Remove item (marks as purchased)
-client.remove_item(paprika_id=uid)
-```
-
-### Known Limitations & Behaviors
-
-1. **No True Deletion:** Items can only be marked as purchased, not removed
-2. **All-or-Nothing Sync:** GET groceries returns ALL items from ALL lists
-3. **Gzip Inconsistency:** Responses sometimes compressed, sometimes not
-4. **Multiple Lists:** Must filter items by `list_uid` client-side
-5. **UUID Generation:** Client responsible for generating unique IDs
-6. **Rate Limits:** Unknown - be conservative (60+ second intervals recommended)
-7. **Unofficial API:** May break with app updates, no official documentation
-8. **Token Expiration:** Unknown duration - handle 401 gracefully
-
-### Phase 1 Implementation Status
-
-✅ **Completed:**
-- V1 authentication with HTTP Basic Auth
-- Token caching and automatic refresh
-- Grocery list discovery (`/v2/sync/grocerylists/`)
-- List-specific item filtering
-- Item creation with proper list targeting
-- Item updates (checked status, name)
-- Soft deletion (mark as purchased)
-- Gzip compression for POST requests
-- Gzip decompression for responses
-
-✅ **Tested:**
-- All CRUD operations verified with real Paprika account
-- Items appear correctly in Paprika app
-- List filtering works correctly
-- Token caching persists across sessions
-- Checked status sync works bidirectionally
-
----
-
-## Skylight API Patterns
-
-### Authentication
-**Endpoint:** `POST https://api.ourskylight.com/api/sessions`
-
-**Request Body:**
-```json
-{
-  "user": {
-    "email": "user@example.com",
-    "password": "password"
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "user_id": 12345,
-  "user_token": "abc123xyz..."
-}
-```
-
-**Token Usage:**
-- Encode as Base64: `userId:userToken`
-- Example: `12345:abc123xyz` → Base64 encode → `MTIzNDU6YWJjMTIzeHl6`
-- Use in Authorization header: `Token token="MTIzNDU6YWJjMTIzeHl6"`
-
-### Finding Frame ID
-Users need their frame_id for configuration.
-
-**Endpoint:** `GET https://api.ourskylight.com/api/frames`
-
-**Response:**
-```json
-{
-  "frames": [
-    {
-      "id": "frame123",
-      "name": "Smith Family Frame"
-    }
-  ]
-}
-```
-
-Helper script `scripts/find_skylight_frame.py` will discover frame_id in Phase 2.
-
-### Grocery List Operations
-
-**Response Format:** JSON:API specification
-- All responses use `data` wrapper with `attributes` object
-- Need to parse: `response['data']['attributes']`
-
-**List All Lists:**
-- Endpoint: `GET /api/frames/{frameId}/lists`
-- Find list by name matching (e.g., "Grocery List")
-
-**Get List Items:**
-- Endpoint: `GET /api/frames/{frameId}/lists/{listId}/items`
-- Returns array of items with checked status
-
-**Item Fields:**
-- `id`: Unique identifier (use as skylight_id)
-- `name`: Item name
-- `checked`: Boolean checked status
-- `created_at`: ISO 8601 timestamp
-- `updated_at`: Last modification timestamp
-
-### Write Operations (Implemented)
-
-**✅ Implemented based on JSON:API conventions:**
-
-**Create Item:**
-- **Endpoint:** `POST /api/frames/{frameId}/lists/{listId}/items`
-- **Headers:** `Authorization: Token token="<base64_token>"`, `Content-Type: application/json`
-- **Request Format:**
-```json
-{
-  "data": {
-    "type": "list_items",
-    "attributes": {
-      "name": "Milk",
-      "checked": false
-    }
-  }
-}
-```
-- **Response:** JSON:API format with created item ID
-
-**Update Item:**
-- **Endpoint:** `PATCH /api/frames/{frameId}/lists/{listId}/items/{itemId}`
-- **Headers:** `Authorization: Token token="<base64_token>"`, `Content-Type: application/json`
-- **Request Format:**
-```json
-{
-  "data": {
-    "type": "list_items",
-    "id": "{itemId}",
-    "attributes": {
-      "name": "Updated Milk",
-      "checked": true
-    }
-  }
-}
-```
-- **Response:** JSON:API format with updated item
-
-**Delete Item:**
-- **Endpoint:** `DELETE /api/frames/{frameId}/lists/{listId}/items/{itemId}`
-- **Headers:** `Authorization: Token token="<base64_token>"`
-- **Request:** No body required
-- **Response:** Success status
-
-**Implementation Notes:**
-- Uses standard JSON:API format (`data.type`, `data.attributes`)
-- Supports both name and checked status updates
-- Delete operation requires finding the list ID first
-- All operations tested and verified working
-
-### Known Limitations
-- API is unofficial/undocumented
-- Write operations require reverse engineering
-- Rate limits unknown
-- May break with Skylight app updates
+## Implementation Approach
+
+### Authentication Strategy
+- **Paprika**: V1 authentication with token caching for stability
+- **Skylight**: Multi-method authentication with frame discovery
+- **Token Management**: File-based caching with automatic refresh on 401
+
+### Client Architecture
+- **Custom Implementations**: Direct API clients for full control over sync behavior
+- **Error Handling**: Graceful degradation with detailed logging
+- **State Management**: SQLite-based tracking for conflict resolution and change detection
+
+### Key Design Decisions
+1. **Unidirectional Deletion**: Paprika → Skylight only (due to Paprika API limitations)
+2. **Bulk Operations**: Use bulk endpoints for efficiency where available
+3. **Conservative Sync**: Preserve existing data structures (e.g., Paprika aisles)
+4. **Timestamp-Based Conflicts**: "Last edit wins" approach for simplicity
+5. **Wrapper Pattern**: Maintain backward compatibility while using working endpoints
+6. **State Comparison**: Database-driven change detection for reliable sync
+
+### Implementation Patterns Discovered
+
+**Paprika Integration:**
+- V1 authentication proves more stable than V2
+- HTTP Basic Auth + form data required for login
+- Gzip compression handling needed for responses
+- Client-generated UUID4 (uppercase) for new items
+- Soft deletion only - mark items as `purchased=True`
+
+**Skylight Integration:**
+- Multi-method authentication approach for robustness
+- JSON:API format compliance required
+- Individual deletion broken - must use bulk destroy endpoint
+- Base64 token encoding: `base64(user_id:auth_token)`
+
+**Sync Engine:**
+- Three-way state comparison (DB, Paprika, Skylight)
+- Bulk operations for efficiency
+- Error isolation - single operation failures don't break sync
+- Database-first approach for reliable change detection
 
 ---
 
@@ -446,16 +94,43 @@ Sync bidirectionally whenever status changes.
 **Implementation:**
 - When creating item in Paprika from Skylight: Let Paprika auto-assign aisle
 - When updating Paprika item: Never touch aisle field
-- Aisle field excluded from `SkylightListItem` model
+- Aisle field excluded from sync operations
 
 ### Deletion Handling
-**Challenge:** Paprika doesn't support true deletion
+**Challenge:** Paprika doesn't support true deletion; Skylight individual deletion is non-functional
 
-**Solution:**
-- Track deleted items in SQLite DB with `deleted` flag
-- When item deleted in Skylight: Mark as deleted in DB, mark as purchased in Paprika
-- When item deleted in Paprika (marked purchased): Mark as deleted in DB, delete from Skylight
-- Don't recreate items marked as deleted during sync
+**✅ Implemented Solution:**
+- **Detection Method:** Compare current API responses with previous sync state in database
+- **Paprika → Skylight:** When items missing from Paprika API response, bulk delete from Skylight
+- **Skylight Individual Deletion:** Not implemented (Paprika can't truly delete items)
+- **Database Tracking:** Items marked as deleted to prevent recreation
+
+**Implementation Details:**
+1. **State Comparison:** `get_linked_items_for_pair()` queries database for previously synced items
+2. **Missing Item Detection:** Items in database but absent from current Paprika response = deleted
+3. **Bulk Deletion:** Use `bulk_delete_items()` with `bulk_destroy` endpoint for efficiency
+4. **Error Handling:** Deletion failures don't break entire sync process
+
+**Python Implementation:**
+```python
+# Detect deletions by comparing API response to database state
+current_paprika_ids = {item.paprika_id for item in paprika_items}
+linked_items = state_manager.get_linked_items_for_pair(paprika_uid, skylight_id)
+
+# Find items missing from current response
+deleted_skylight_ids = []
+for link in linked_items:
+    if link.paprika_item.paprika_id not in current_paprika_ids:
+        deleted_skylight_ids.append(link.skylight_item.skylight_id)
+
+# Bulk delete from Skylight
+if deleted_skylight_ids:
+    skylight_client.bulk_delete_items(deleted_skylight_ids, list_name)
+```
+
+**Scope:**
+- ✅ **Paprika → Skylight deletion** (fully implemented)
+- ❌ **Skylight → Paprika deletion** (not feasible due to Paprika limitations)
 
 ### Change Detection Algorithm
 
@@ -530,9 +205,9 @@ CREATE TABLE items (
   - Gzip compression required for POST
 
 ### Skylight
-- **Primary Research Method:** Browser DevTools network inspection (Phase 2)
+- **Primary Research Method:** Browser DevTools network inspection
 - **Expected Format:** JSON:API specification
-- **Key Finding:** Base64 token encoding for auth
+- **Key Finding:** Individual deletion non-functional, bulk deletion works
 
 ### General
 - **Sync Strategy:** Inspired by Dropbox conflict resolution patterns
@@ -601,7 +276,7 @@ When completing any development phase, always follow this cleanup protocol:
 
 2. **Update Documentation**:
    - Update PROJECT.md with phase status and progress
-   - Document any API discoveries in CLAUDE.md
+   - Document any API discoveries in API_REFERENCE.md
    - Update README.md if setup process changed
 
 3. **Verify Clean State**:
@@ -611,7 +286,7 @@ When completing any development phase, always follow this cleanup protocol:
 
 4. **File Organization**:
    - Keep only production-ready files and final working tests
-   - Move research notes to CLAUDE.md if valuable
+   - Move research notes to API_REFERENCE.md if valuable
    - Remove duplicate or obsolete implementations
 
 **Rationale**: Each phase generates many experimental files during development. Cleaning up prevents:
@@ -623,10 +298,16 @@ When completing any development phase, always follow this cleanup protocol:
 ### Phase Status Tracking
 
 **Use PROJECT.md for all progress tracking**, not CLAUDE.md. CLAUDE.md should contain:
-- API patterns and technical discoveries
-- Implementation guidelines and best practices
-- Research findings and workarounds
-- Code examples and usage patterns
+- High-level implementation patterns and decisions
+- Sync logic and conflict resolution strategies
+- Research findings and architectural choices
+- Code examples for key algorithms
+
+API_REFERENCE.md should contain:
+- Detailed API endpoints and formats
+- Request/response examples
+- Error codes and troubleshooting
+- Technical limitations and behaviors
 
 PROJECT.md should contain:
 - Overall project status and milestones
