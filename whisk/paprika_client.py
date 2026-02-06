@@ -1,8 +1,10 @@
 """Paprika API client using reverse-engineered REST API"""
 
 import gzip
+import hashlib
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -329,8 +331,6 @@ class PaprikaClient:
                     logger.debug(f"Using default list: {default_list.get('name')}")
 
             # Generate a UUID for the item
-            import uuid
-
             uid = str(uuid.uuid4()).upper()
 
             # Create grocery item - API requires gzip-compressed JSON array
@@ -478,8 +478,6 @@ class PaprikaClient:
                 if meal_date_str:
                     try:
                         # Parse date string - handle both YYYY-MM-DD and YYYY-MM-DD HH:MM:SS formats
-                        from datetime import datetime
-
                         date_str = meal_date_str.split(" ")[0]  # Take only the date part
                         meal_date = datetime.strptime(date_str, "%Y-%m-%d").date()
 
@@ -579,9 +577,6 @@ class PaprikaClient:
         Returns:
             64-character hex string
         """
-        import uuid
-        import hashlib
-
         # Generate a unique hash based on UUID and current timestamp
         unique_str = f"{uuid.uuid4()}{datetime.now(timezone.utc).isoformat()}"
         return hashlib.sha256(unique_str.encode()).hexdigest()
@@ -653,8 +648,6 @@ class PaprikaClient:
         """
         try:
             # Generate UID if not provided
-            import uuid
-
             uid = recipe_data.get("uid", str(uuid.uuid4()).upper())
 
             # Get recipe name (required)
@@ -700,9 +693,11 @@ class PaprikaClient:
 
         Args:
             uid: Recipe unique identifier
-            recipe_data: Dictionary with fields to update. Must include ALL fields
+            recipe_data: Dictionary with recipe fields. Must include ALL fields
                         (partial updates not supported). Use get_recipe() first to
                         get current data, then modify and update.
+                        Note: The 'uid' and 'hash' fields are automatically managed
+                        and don't need to be included in recipe_data.
 
         Example:
             # Get current recipe
@@ -710,8 +705,7 @@ class PaprikaClient:
             # Modify fields
             recipe["name"] = "Updated Recipe Name"
             recipe["rating"] = 5
-            recipe["hash"] = client._generate_recipe_hash()  # Update hash
-            # Save changes
+            # Save changes (uid and hash automatically set)
             client.update_recipe("ABC-123", recipe)
         """
         try:
