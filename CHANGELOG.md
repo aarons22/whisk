@@ -8,7 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- New features go here
+- Recipe management functions in Paprika client
+  - `list_recipes()` - Get lightweight list of recipe UIDs and hashes for change detection
+  - `get_recipe(uid)` - Fetch full recipe details
+  - `create_recipe(recipe_data)` - Create new recipes with auto-generated UIDs
+  - `update_recipe(uid, recipe_data)` - Update existing recipes
+  - `delete_recipe(uid)` - Soft delete recipes (set in_trash=True)
+  - Helper methods for hash generation and default recipe creation
+- Example script demonstrating Paprika recipe API usage (`examples/paprika_recipes_usage.py`)
 
 ### Changed
 - Changes to existing functionality go here
