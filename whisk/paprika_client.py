@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class PaprikaClient:
-    """Client for interacting with Paprika grocery lists via reverse-engineered API"""
+    """Client for interacting with Paprika grocery lists and recipes via reverse-engineered API"""
 
     BASE_URL = "https://www.paprikaapp.com/api"
 
@@ -44,6 +44,7 @@ class PaprikaClient:
 
             # V1 API requires HTTP Basic Auth + form data
             from requests.auth import HTTPBasicAuth
+
             auth = HTTPBasicAuth(self.email, self.password)
             data = {"email": self.email, "password": self.password}
 
@@ -284,9 +285,7 @@ class PaprikaClient:
                         timestamp_str = updated_at.replace("Z", "+00:00")
                         timestamp = datetime.fromisoformat(timestamp_str)
                     except Exception as e:
-                        logger.warning(
-                            f"Failed to parse timestamp for {grocery.get('name')}: {e}"
-                        )
+                        logger.warning(f"Failed to parse timestamp for {grocery.get('name')}: {e}")
 
                 item = ListItem(
                     name=grocery.get("name", ""),
@@ -331,6 +330,7 @@ class PaprikaClient:
 
             # Generate a UUID for the item
             import uuid
+
             uid = str(uuid.uuid4()).upper()
 
             # Create grocery item - API requires gzip-compressed JSON array
@@ -370,7 +370,9 @@ class PaprikaClient:
             logger.error(f"Failed to add item to Paprika: {e}")
             raise
 
-    def update_item(self, paprika_id: str, checked: bool, list_name: str, name: Optional[str] = None) -> None:
+    def update_item(
+        self, paprika_id: str, checked: bool, list_name: str, name: Optional[str] = None
+    ) -> None:
         """
         Update item (checked status or name)
 
@@ -477,7 +479,8 @@ class PaprikaClient:
                     try:
                         # Parse date string - handle both YYYY-MM-DD and YYYY-MM-DD HH:MM:SS formats
                         from datetime import datetime
-                        date_str = meal_date_str.split(' ')[0]  # Take only the date part
+
+                        date_str = meal_date_str.split(" ")[0]  # Take only the date part
                         meal_date = datetime.strptime(date_str, "%Y-%m-%d").date()
 
                         # Check if meal is within date range
@@ -498,7 +501,7 @@ class PaprikaClient:
                                 0: "breakfast",
                                 1: "lunch",
                                 2: "dinner",
-                                3: "snack"
+                                3: "snack",
                             }
                             numeric_type = meal.get("type", 2)  # Default to dinner (type 2)
                             meal_type = type_to_meal_type.get(numeric_type, "dinner")
@@ -518,4 +521,252 @@ class PaprikaClient:
 
         except Exception as e:
             logger.error(f"Failed to get meal plans from Paprika: {e}")
+            raise
+
+    def list_recipes(self) -> List[Dict[str, str]]:
+        """
+        Get lightweight list of all recipes (only UIDs and hashes)
+
+        This is the efficient way to check for recipe changes without downloading
+        full recipe data. Compare hashes against cached values to detect changes.
+
+        Returns:
+            List of dictionaries with 'uid' and 'hash' keys
+            Example: [{"uid": "ABC-123", "hash": "a1b2c3..."}]
+        """
+        try:
+            logger.debug("Fetching recipe list from Paprika...")
+            result = self._make_request("GET", "/v2/sync/recipes/")
+            recipes = result.get("result", [])
+            logger.info(f"Retrieved {len(recipes)} recipes from Paprika")
+            return recipes
+
+        except Exception as e:
+            logger.error(f"Failed to get recipe list from Paprika: {e}")
+            raise
+
+    def get_recipe(self, uid: str) -> Dict[str, Any]:
+        """
+        Get full recipe details by UID
+
+        Args:
+            uid: Recipe unique identifier
+
+        Returns:
+            Dictionary containing full recipe data with all fields
+        """
+        try:
+            logger.debug(f"Fetching recipe {uid} from Paprika...")
+            result = self._make_request("GET", f"/v2/sync/recipe/{uid}/")
+            recipe = result.get("result", {})
+
+            if not recipe:
+                raise Exception(f"Recipe {uid} not found")
+
+            logger.info(f"Retrieved recipe: {recipe.get('name', uid)}")
+            return recipe
+
+        except Exception as e:
+            logger.error(f"Failed to get recipe {uid} from Paprika: {e}")
+            raise
+
+    def _generate_recipe_hash(self) -> str:
+        """
+        Generate a 64-character hexadecimal hash for a recipe
+
+        The API accepts any 64-char hex string. This uses a UUID as the base.
+
+        Returns:
+            64-character hex string
+        """
+        import uuid
+        import hashlib
+
+        # Generate a unique hash based on UUID and current timestamp
+        unique_str = f"{uuid.uuid4()}{datetime.now(timezone.utc).isoformat()}"
+        return hashlib.sha256(unique_str.encode()).hexdigest()
+
+    def _create_default_recipe(self, uid: str, name: str) -> Dict[str, Any]:
+        """
+        Create a recipe object with all required fields and defaults
+
+        Args:
+            uid: Recipe unique identifier (UUID4 uppercase)
+            name: Recipe name/title
+
+        Returns:
+            Dictionary with all recipe fields initialized to defaults
+        """
+        return {
+            "uid": uid,
+            "name": name,
+            "ingredients": "",
+            "directions": "",
+            "description": "",
+            "notes": "",
+            "nutritional_info": "",
+            "servings": "",
+            "difficulty": "",
+            "prep_time": "",
+            "cook_time": "",
+            "total_time": "",
+            "rating": 0,
+            "categories": [],
+            "source": "",
+            "source_url": "",
+            "image_url": "",
+            "photo": "",
+            "photo_hash": "",
+            "photo_large": None,
+            "photo_url": None,
+            "hash": self._generate_recipe_hash(),
+            "created": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "on_favorites": False,
+            "on_grocery_list": None,
+            "in_trash": False,
+            "is_pinned": False,
+            "scale": None,
+        }
+
+    def create_recipe(self, recipe_data: Dict[str, Any]) -> str:
+        """
+        Create a new recipe
+
+        Args:
+            recipe_data: Dictionary with recipe fields. Must include at least 'name'.
+                        Other fields are optional and will use defaults if not provided.
+                        If 'uid' is not provided, one will be generated.
+
+        Returns:
+            Recipe UID
+
+        Example:
+            recipe = {
+                "name": "Chocolate Chip Cookies",
+                "ingredients": "2 cups flour\\n1 cup sugar\\n1 cup chocolate chips",
+                "directions": "1. Mix ingredients\\n2. Bake at 350F for 12 minutes",
+                "prep_time": "15 min",
+                "cook_time": "12 min",
+                "categories": ["Desserts", "Cookies"]
+            }
+            uid = client.create_recipe(recipe)
+        """
+        try:
+            # Generate UID if not provided
+            import uuid
+
+            uid = recipe_data.get("uid", str(uuid.uuid4()).upper())
+
+            # Get recipe name (required)
+            name = recipe_data.get("name")
+            if not name:
+                raise ValueError("Recipe name is required")
+
+            logger.debug(f"Creating recipe in Paprika: {name}")
+
+            # Start with defaults, then update with provided data
+            recipe = self._create_default_recipe(uid, name)
+            recipe.update(recipe_data)
+            recipe["uid"] = uid  # Ensure UID is set
+
+            # Ensure hash is generated if not provided
+            if not recipe.get("hash"):
+                recipe["hash"] = self._generate_recipe_hash()
+
+            # Send as gzipped form data (individual endpoint, not bulk)
+            result = self._make_request(
+                "POST", f"/v2/sync/recipe/{uid}/", data=recipe, gzip_form_data=True
+            )
+            logger.debug(f"Create response: {result}")
+
+            # Check for success
+            if result.get("error"):
+                error_msg = result.get("error", {}).get("message", "Unknown error")
+                raise Exception(f"API error: {error_msg}")
+
+            if not result.get("result"):
+                raise Exception("Create operation did not return success")
+
+            logger.info(f"Created recipe in Paprika: {name} (uid={uid})")
+            return uid
+
+        except Exception as e:
+            logger.error(f"Failed to create recipe in Paprika: {e}")
+            raise
+
+    def update_recipe(self, uid: str, recipe_data: Dict[str, Any]) -> None:
+        """
+        Update an existing recipe
+
+        Args:
+            uid: Recipe unique identifier
+            recipe_data: Dictionary with fields to update. Must include ALL fields
+                        (partial updates not supported). Use get_recipe() first to
+                        get current data, then modify and update.
+
+        Example:
+            # Get current recipe
+            recipe = client.get_recipe("ABC-123")
+            # Modify fields
+            recipe["name"] = "Updated Recipe Name"
+            recipe["rating"] = 5
+            recipe["hash"] = client._generate_recipe_hash()  # Update hash
+            # Save changes
+            client.update_recipe("ABC-123", recipe)
+        """
+        try:
+            logger.debug(f"Updating recipe in Paprika: {uid}")
+
+            # Ensure UID matches
+            recipe_data["uid"] = uid
+
+            # Update hash to indicate changes
+            recipe_data["hash"] = self._generate_recipe_hash()
+
+            # Send as gzipped form data
+            result = self._make_request(
+                "POST", f"/v2/sync/recipe/{uid}/", data=recipe_data, gzip_form_data=True
+            )
+
+            if not result.get("result"):
+                raise Exception("Update operation did not return success")
+
+            logger.info(f"Updated recipe in Paprika: {recipe_data.get('name', uid)}")
+
+        except Exception as e:
+            logger.error(f"Failed to update recipe in Paprika: {e}")
+            raise
+
+    def delete_recipe(self, uid: str) -> None:
+        """
+        Delete a recipe (soft delete - sets in_trash=True)
+
+        Note: Paprika doesn't support true deletion. This marks the recipe as
+        deleted by setting in_trash=True.
+
+        Args:
+            uid: Recipe unique identifier
+        """
+        try:
+            logger.debug(f"Deleting recipe from Paprika: {uid}")
+
+            # Get current recipe data
+            recipe = self.get_recipe(uid)
+
+            # Mark as deleted
+            recipe["in_trash"] = True
+            recipe["hash"] = self._generate_recipe_hash()
+
+            # Update the recipe
+            result = self._make_request(
+                "POST", f"/v2/sync/recipe/{uid}/", data=recipe, gzip_form_data=True
+            )
+
+            if not result.get("result"):
+                raise Exception("Delete operation did not return success")
+
+            logger.info(f"Deleted recipe from Paprika: {recipe.get('name', uid)}")
+
+        except Exception as e:
+            logger.error(f"Failed to delete recipe from Paprika: {e}")
             raise
