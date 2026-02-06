@@ -12,8 +12,10 @@ For high-level implementation patterns and sync logic, refer to `./CLAUDE.md`.
 - **V1 Authentication Required**: V2 can trigger "Unrecognized client" errors
 - **HTTP Basic Auth + Form Data**: Unique authentication pattern
 - **Gzip Response Handling**: Some responses compressed, some not
-- **No True Deletion**: Only soft delete via `purchased=True` supported
+- **No True Deletion**: Only soft delete via `purchased=True` (groceries) or `in_trash=True` (recipes)
 - **Client UUID Generation**: Must generate UUID4 (uppercase) for new items
+- **Two-Step Recipe Fetch**: List endpoint returns only `{uid, hash}` pairs; must fetch each recipe individually
+- **Hash-Based Change Detection**: Compare recipe hashes to detect changes without downloading full data
 
 ### Skylight Key Findings
 - **Individual Deletion Broken**: Standard REST DELETE /items/{id} non-functional
@@ -264,6 +266,238 @@ Authorization: Bearer <token>
 | 1           | lunch     | Midday meals |
 | 2           | dinner    | Evening meals |
 | 3           | snack     | Snacks/appetizers |
+
+---
+
+### Recipes
+
+The recipe API uses a two-step sync pattern: a lightweight list endpoint returns `{uid, hash}` pairs for change detection, and individual recipe details must be fetched one at a time.
+
+**Sources:** [Matt Steele's Paprika API Gist](https://gist.github.com/mattdsteele/7386ec363badfdeaad05a418b9a1f30a), [paprika-recipes Python library](https://github.com/coddingtonbear/paprika-recipes), [paprika-rs Rust client](https://github.com/Syfaro/paprika-rs)
+
+#### List All Recipes (Lightweight)
+**Request:**
+```http
+GET /v2/sync/recipes/
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "result": [
+    {
+      "uid": "07975578-DE1A-42AB-B184-6E8FCB9AB753",
+      "hash": "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890"
+    },
+    {
+      "uid": "081835AE-B714-4A3D-97B3-81764AA96706",
+      "hash": "f6e5d4c3b2a1098765fedcba0987654321fedcba0987654321fedcba09876543"
+    }
+  ]
+}
+```
+
+**Key Points:**
+- Returns ONLY `uid` and `hash` pairs — NOT full recipe data
+- Designed for efficient change detection: compare `hash` against cached values
+- Must fetch individual recipes via `/sync/recipe/{uid}/` for full details
+- V1 endpoint (`/v1/sync/recipes/`) also works with Basic Auth
+
+#### Get Single Recipe (Full Details)
+**Request:**
+```http
+GET /v2/sync/recipe/{uid}/
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "result": {
+    "uid": "07975578-DE1A-42AB-B184-6E8FCB9AB753",
+    "name": "Jordan Marsh's Blueberry Muffins",
+    "ingredients": "2 cups flour\n1/2 cup sugar\n2 tsp baking powder\n1/2 tsp salt\n1/3 cup butter\n1 egg\n1 cup milk\n1.5 cups blueberries",
+    "directions": "1. Preheat oven to 375F.\n2. Mix dry ingredients.\n3. Cut in butter.\n4. Beat egg with milk, add to dry mix.\n5. Fold in blueberries.\n6. Fill muffin cups 2/3 full.\n7. Bake 25 minutes.",
+    "description": "Classic blueberry muffin recipe from the Jordan Marsh department store",
+    "notes": "Best with fresh blueberries. Can substitute frozen (don't thaw).",
+    "nutritional_info": "",
+    "servings": "12 muffins",
+    "difficulty": "",
+    "prep_time": "15 min",
+    "cook_time": "25 min",
+    "total_time": "40 min",
+    "rating": 5,
+    "categories": ["Breakfast", "Baking"],
+    "source": "New York Times",
+    "source_url": "https://cooking.nytimes.com/recipes/...",
+    "image_url": "",
+    "photo": "photo_filename.jpg",
+    "photo_hash": "abc123def456...",
+    "photo_large": null,
+    "photo_url": "https://uploads.paprikaapp.com/...",
+    "hash": "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890",
+    "created": "2024-06-15 10:30:00",
+    "on_favorites": true,
+    "on_grocery_list": null,
+    "in_trash": false,
+    "is_pinned": false,
+    "scale": null
+  }
+}
+```
+
+**Note:** The V1 endpoint (`/v1/sync/recipe/{uid}/`) also works with Basic Auth.
+
+#### Recipe Object Fields
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `uid` | `string` | UUID4 (uppercase) | Unique recipe identifier |
+| `name` | `string` | `""` | Recipe title |
+| `ingredients` | `string` | `""` | Newline-separated ingredient list |
+| `directions` | `string` | `""` | Step-by-step cooking instructions |
+| `description` | `string` | `""` | Recipe summary or notes |
+| `notes` | `string` | `""` | Additional notes |
+| `nutritional_info` | `string` | `""` | Nutritional data |
+| `servings` | `string` | `""` | Serving quantity (free text) |
+| `difficulty` | `string` | `""` | Recipe complexity level |
+| `prep_time` | `string` | `""` | Preparation duration |
+| `cook_time` | `string` | `""` | Cooking duration |
+| `total_time` | `string` | `""` | Total time |
+| `rating` | `int` | `0` | Star rating (0=unrated, 1-5) |
+| `categories` | `list[string]` | `[]` | Category names |
+| `source` | `string` | `""` | Attribution / source name |
+| `source_url` | `string` | `""` | Original recipe URL |
+| `image_url` | `string` | `""` | External image URL |
+| `photo` | `string` | `""` | Photo filename |
+| `photo_hash` | `string` | `""` | SHA256 hash of photo file |
+| `photo_large` | `string/null` | `null` | Large photo filename |
+| `photo_url` | `string/null` | `null` | Server-hosted photo URL (read-only) |
+| `hash` | `string` | SHA256(UUID4) | Change detection hash (64-char hex) |
+| `created` | `string` | Current datetime | Creation timestamp (`YYYY-MM-DD HH:MM:SS`) |
+| `on_favorites` | `bool` | `false` | Whether recipe is favorited |
+| `on_grocery_list` | `string/null` | `null` | Grocery list reference (if ingredients added) |
+| `in_trash` | `bool` | `false` | Soft deletion flag |
+| `is_pinned` | `bool` | `false` | Quick access marker |
+| `scale` | `string/null` | `null` | Serving size adjustment factor |
+
+#### Create/Update Recipe
+**Request:**
+```http
+POST /v2/sync/recipe/{uid}/
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+
+data: <gzip-compressed JSON recipe object>
+```
+
+**Response:**
+```json
+{
+  "result": true
+}
+```
+
+**Critical Requirements:**
+1. Data must be gzip-compressed JSON of the **full recipe object** (not partial)
+2. Send as `multipart/form-data` with field name `data`
+3. Client must generate UUID4 (uppercase) for new recipes
+4. Must include ALL fields — empty strings for unused text fields, `false` for booleans, `0` for rating, `[]` for categories
+5. Update the `hash` field whenever recipe content changes (any 64-char hex string works)
+6. Do **NOT** use the bulk endpoint (`POST /v2/sync/recipes/`) for creating recipes — it returns 500 errors. Use the individual `/sync/recipe/{uid}/` endpoint instead
+
+#### Delete Recipe (Soft Delete Only)
+**Method:** Set `in_trash: true` on the recipe object and POST the update.
+
+```http
+POST /v2/sync/recipe/{uid}/
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+
+data: <gzip-compressed JSON with in_trash=true>
+```
+
+**Note:** No true DELETE endpoint exists for recipes.
+
+#### Recommended Sync Workflow
+
+1. **GET `/v2/sync/recipes/`** → get list of `{uid, hash}` pairs
+2. **Compare hashes** against locally cached values
+3. **GET `/v2/sync/recipe/{uid}/`** for each recipe with a changed or new hash
+4. **Cache** the full recipe data and hash locally for future comparison
+
+This two-step approach minimizes bandwidth — most syncs only need the lightweight list, and full recipe data is only fetched when changes are detected.
+
+---
+
+### Sync Status
+
+#### Get Sync Status
+**Request:**
+```http
+GET /v2/sync/status/
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "result": {
+    "recipes": 42,
+    "categories": 5,
+    "meals": 12,
+    "groceries": 8,
+    "groceryaisles": 15,
+    "groceryingredients": 30,
+    "grocerylists": 3,
+    "mealtypes": 4,
+    "menuitems": 0,
+    "menus": 0,
+    "pantry": 10,
+    "photos": 25,
+    "bookmarks": 2
+  }
+}
+```
+
+**Key Points:**
+- Values are **change counters** that increment on modifications, not total counts
+- Useful for smart syncing: only fetch a resource type if its counter has changed since last check
+- Compare against previously stored values to detect which types need re-syncing
+
+---
+
+### Categories
+
+#### List All Categories
+**Request:**
+```http
+GET /v2/sync/categories/
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "result": [
+    {
+      "uid": "CAT-UID-1",
+      "name": "Breakfast",
+      "order_flag": 0,
+      "parent_uid": null
+    },
+    {
+      "uid": "CAT-UID-2",
+      "name": "Baking",
+      "order_flag": 1,
+      "parent_uid": null
+    }
+  ]
+}
+```
+
+**Note:** Recipe `categories` field contains category names (strings), not UIDs.
 
 ---
 
@@ -617,13 +851,17 @@ Authorization: Token token="<base64_token>"
 1. **Gzip Compression**: Responses MAY be gzip compressed (check for `\x1f\x8b` magic bytes)
 2. **All-or-Nothing**: GET endpoints return ALL items from ALL lists/categories
 3. **Client-Generated IDs**: Must generate UUID4 (uppercase) for new items
-4. **Soft Delete Only**: True deletion not supported, use `purchased: true`
+4. **Soft Delete Only**: True deletion not supported — use `purchased: true` for groceries, `in_trash: true` for recipes
 5. **Rate Limits**: Unknown - recommend 60+ second intervals
 6. **Multiple Lists**: Must filter items by `list_uid` client-side
 7. **Unofficial API**: May break with app updates, no official documentation
 8. **Token Expiration**: Unknown duration - handle 401 gracefully
 9. **Aisle Auto-Assignment**: Server assigns aisles based on `ingredient`/`name` - leave `aisle` field empty when creating
 10. **Preserve Aisles**: Don't overwrite aisle field when syncing - only sync `name`, `purchased`, timestamps
+11. **Two-Step Recipe Sync**: `/sync/recipes/` returns only `{uid, hash}` pairs; must fetch each recipe individually via `/sync/recipe/{uid}/`
+12. **No Bulk Recipe Create**: `POST /v2/sync/recipes/` (plural) returns 500 errors; use individual `/sync/recipe/{uid}/` endpoint
+13. **Recipe Hash**: Any 64-char hex string works; server does not strictly validate format. Update hash when content changes
+14. **Full Object Required**: Recipe POST/update requires ALL fields, not partial updates
 
 ### Skylight Specific
 1. **JSON:API Format**: All responses follow JSON:API specification
@@ -686,5 +924,5 @@ Authorization: Token token="<base64_token>"
 
 ---
 
-*Last updated: 2026-01-31*
-*Based on reverse engineering and actual API responses*
+*Last updated: 2026-02-06*
+*Based on reverse engineering, actual API responses, and community implementations*
