@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import ConfigManager, WhiskConfig
+from ._version import __version__
 
 logger = logging.getLogger(__name__)
 
@@ -735,7 +736,7 @@ For detailed help on any command, use: whisk <command> --help
     parser.add_argument(
         "--version",
         action="version",
-        version="whisk 1.0.0"
+        version=f"whisk {__version__}"
     )
 
     # Global options

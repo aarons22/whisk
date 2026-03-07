@@ -5,6 +5,6 @@ A production-ready CLI tool for syncing grocery lists between Paprika Recipe Man
 and Skylight Calendar's grocery list feature.
 """
 
-__version__ = "1.0.0"
+from ._version import __version__
 __author__ = "Whisk Sync Team"
 __description__ = "Bidirectional sync for Paprika and Skylight grocery lists"
