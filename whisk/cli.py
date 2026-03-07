@@ -644,8 +644,8 @@ def cmd_upgrade(args) -> int:
 
             # Determine the correct pip install command
             if in_venv:
-                # In virtual environment - safe to install normally
-                pip_cmd = ["python3", "-m", "pip", "install", "-e", "."]
+                # In virtual environment - use the same interpreter that launched whisk.
+                pip_cmd = [sys.executable, "-m", "pip", "install", "-e", "."]
             else:
                 # Not in virtual environment - try with --user first
                 pip_cmd = ["python3", "-m", "pip", "install", "--user", "-e", "."]
@@ -658,10 +658,19 @@ def cmd_upgrade(args) -> int:
             )
 
             if result.returncode != 0:
-                # If --user failed with externally-managed-environment, try --break-system-packages
-                if not in_venv and "externally-managed-environment" in result.stderr:
-                    print("⚠️  System Python is externally managed. Trying with --break-system-packages...")
-                    pip_cmd_fallback = ["python3", "-m", "pip", "install", "--break-system-packages", "-e", "."]
+                # In non-venv environments, retry with --break-system-packages for PEP 668 hosts.
+                if not in_venv:
+                    print("⚠️  Standard install failed. Retrying with --break-system-packages...")
+                    pip_cmd_fallback = [
+                        "python3",
+                        "-m",
+                        "pip",
+                        "install",
+                        "--break-system-packages",
+                        "--user",
+                        "-e",
+                        ".",
+                    ]
                     result = subprocess.run(
                         pip_cmd_fallback,
                         cwd=whisk_dir,
@@ -669,15 +678,14 @@ def cmd_upgrade(args) -> int:
                         text=True
                     )
 
-                    if result.returncode != 0:
-                        print(f"❌ Failed to update dependencies: {result.stderr}")
-                        print("💡 Consider installing Whisk in a virtual environment:")
-                        print("   python3 -m venv ~/.whisk-venv")
-                        print("   source ~/.whisk-venv/bin/activate")
-                        print("   pip install -e ~/.whisk")
-                        return 1
-                else:
-                    print(f"❌ Failed to update dependencies: {result.stderr}")
+                if result.returncode != 0:
+                    error_output = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+                    print(f"❌ Failed to update dependencies: {error_output}")
+                    print("💡 Recommended fix (uses an isolated virtual environment):")
+                    print("   cd ~/.whisk")
+                    print("   python3 -m venv venv")
+                    print("   ./venv/bin/python -m pip install --upgrade pip")
+                    print("   ./venv/bin/pip install -e .")
                     return 1
 
             print("✅ Whisk upgraded successfully!")
