@@ -692,6 +692,177 @@ Content-Type: application/json
 
 ### Meals (Meal Sittings)
 
+#### Get Meal Recipes
+**Request:**
+```http
+GET /frames/{frameId}/meals/recipes?include=meal_category
+Authorization: Token token="<base64_token>"
+```
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "id": "recipe_id_1",
+      "type": "meal_recipe",
+      "attributes": {
+        "summary": "Hot Dogs",
+        "description": "Ingredients:\n- Hot dogs\n- Hot dog buns\n\nInstructions:\n1. Grill and serve."
+      },
+      "relationships": {
+        "meal_category": {
+          "data": {
+            "id": "dinner_category_id",
+            "type": "meal_category"
+          }
+        }
+      }
+    }
+  ],
+  "included": [
+    {
+      "id": "dinner_category_id",
+      "type": "meal_category",
+      "attributes": {
+        "label": "Dinner",
+        "color": "#915EA1",
+        "enabled": true,
+        "position": 2
+      }
+    }
+  ]
+}
+```
+
+**Key Fields:**
+- `id`: Skylight recipe ID
+- `attributes.summary`: Recipe name/title
+- `attributes.description`: Recipe body text (can be `null`)
+- `relationships.meal_category.data.id`: Category ID for Breakfast/Lunch/Dinner/Snack
+
+**Notes:**
+- Use `include=meal_category` to return category metadata in `included`
+- Recipe object `type` is `meal_recipe`
+
+#### Get Single Meal Recipe
+**Request:**
+```http
+GET /frames/{frameId}/meals/recipes/{recipeId}?include=meal_category
+Authorization: Token token="<base64_token>"
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "id": "recipe_id_1",
+    "type": "meal_recipe",
+    "attributes": {
+      "summary": "Hot Dogs",
+      "description": "Ingredients:\n- Hot dogs\n- Hot dog buns\n\nInstructions:\n1. Grill and serve."
+    },
+    "relationships": {
+      "meal_category": {
+        "data": {
+          "id": "dinner_category_id",
+          "type": "meal_category"
+        }
+      }
+    }
+  },
+  "included": [
+    {
+      "id": "dinner_category_id",
+      "type": "meal_category",
+      "attributes": {
+        "label": "Dinner"
+      }
+    }
+  ]
+}
+```
+
+#### Create Meal Recipe
+**Request:**
+```http
+POST /frames/{frameId}/meals/recipes?include=meal_category
+Authorization: Token token="<base64_token>"
+Content-Type: application/json
+
+{
+  "meal_category_id": "lunch_category_id",
+  "summary": "new recipe test",
+  "description": "Ingredients:\n- pepper\n- salt\n- butter\n\nInstructions:\n1. Mix and cook."
+}
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "id": "new_recipe_id",
+    "type": "meal_recipe",
+    "attributes": {
+      "summary": "new recipe test",
+      "description": "Ingredients:\n- pepper\n- salt\n- butter\n\nInstructions:\n1. Mix and cook."
+    },
+    "relationships": {
+      "meal_category": {
+        "data": {
+          "id": "lunch_category_id",
+          "type": "meal_category"
+        }
+      }
+    }
+  },
+  "included": [
+    {
+      "id": "lunch_category_id",
+      "type": "meal_category",
+      "attributes": {
+        "label": "Lunch"
+      }
+    }
+  ]
+}
+```
+
+**Required Fields:**
+- `meal_category_id`
+- `summary`
+
+**Optional Fields:**
+- `description` (nullable)
+
+#### Add Recipe Ingredients To Grocery List
+**Request:**
+```http
+POST /frames/{frameId}/meals/recipes/{recipeId}/add_to_grocery_list
+Authorization: Token token="<base64_token>"
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "id": "recipe_id_1",
+    "type": "meal_recipe",
+    "attributes": {
+      "summary": "Hot Dogs",
+      "description": "Ingredients:\n- Hot dogs\n- Hot dog buns\n\nInstructions:\n1. Grill and serve."
+    }
+  },
+  "meta": {
+    "auto_creation_intent_id": 12345678
+  }
+}
+```
+
+**Notes:**
+- Request body is empty (`Content-Length: 0`)
+- Response includes `meta.auto_creation_intent_id` used by Skylight for async grocery-list creation flow
+
 #### Get Meal Categories
 **Request:**
 ```http
@@ -869,6 +1040,9 @@ Authorization: Token token="<base64_token>"
 3. **Date Filtering**: Use `filter[date_from]` and `filter[date_to]` parameters
 4. **Meal Categories**: Must map meal types to category IDs via `/meals/categories`
 5. **Individual Deletion Broken**: Only bulk destroy endpoint works for list item deletion
+6. **Meal Recipes API**: `GET/POST /meals/recipes` and `GET /meals/recipes/{id}` are functional with `include=meal_category`
+7. **Recipe to Grocery Bridge**: `POST /meals/recipes/{id}/add_to_grocery_list` returns `meta.auto_creation_intent_id`
+8. **Recipe Types**: Recipe objects use `type: "meal_recipe"` with category relationship `type: "meal_category"`
 
 ### Common Patterns
 - Both APIs use bearer token authentication
