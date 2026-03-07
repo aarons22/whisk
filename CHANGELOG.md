@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Removed features go here
 
+## [0.0.4] - 2026-03-07
+
+### Added
+- Added Paprika recipe index/details integration to sync full recipe content into Skylight meal recipes
+- Added persistent Paprika-to-Skylight recipe link tracking to keep recipe-backed meal entries connected across sync runs
+
+### Changed
+- Changed meal sync behavior to preserve per-meal fidelity (one Paprika meal entry now maps to one Skylight sitting)
+- Changed Skylight meal sitting sync to support linked `meal_recipe_id`, recipe descriptions, and notes for richer meal entries
+
+### Fixed
+- Fixed existing SQLite database compatibility by adding automatic meal schema migrations and new indexes during startup
+- Fixed Skylight meal update/create handling to align with API requirements when a meal recipe is attached
+
 ## [0.0.3] - 2026-01-31
 
 ### Fixed
@@ -55,7 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bulk operations for efficient sync operations
 - Deletion detection and handling (Paprika → Skylight)
 
-[Unreleased]: https://github.com/aarons22/whisk/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/aarons22/whisk/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/aarons22/whisk/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/aarons22/whisk/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/aarons22/whisk/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/aarons22/whisk/releases/tag/v0.0.1
