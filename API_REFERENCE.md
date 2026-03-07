@@ -1067,6 +1067,8 @@ Content-Type: application/json
 - Validated on March 7, 2026: successfully created and read back 25 separate dinner sittings for the same date.
 - Practical limit was **not** reached at 25 entries.
 - Immediate `POST /meals/sittings` response may show `attributes.instances: []`; follow-up `GET` calls return the expected date in `instances`.
+- When `meal_recipe_id` is provided, `summary` must be blank (`null`); providing a non-blank summary returns `422` with `{"errors":{"summary":["must be blank"]}}`.
+- `POST /meals/sittings` may return `data` as an array even for a single created sitting.
 
 #### Get Meal Sitting Instances (Single Sitting)
 **Request:**
@@ -1130,6 +1132,8 @@ No `PUT /frames/{frameId}/meals/sittings/{sittingId}` calls were captured in `ou
 9. **Sitting Instance Deletion**: Observed delete path is `DELETE /meals/sittings/{sittingId}/instances/{date}` (not base `/meals/sittings/{sittingId}`)
 10. **Multiple Sittings Per Day**: Observed that at least 25 distinct sittings can exist for the same date and meal category (e.g., dinner) without API rejection
 11. **Create Response Timing**: Newly created sittings may return `instances: []` in immediate POST response, but subsequent GET endpoints return the correct date instances
+12. **Recipe-Linked Sitting Validation**: If `meal_recipe_id` is set, `summary` must be blank (`null`) or the API returns `422` (`summary must be blank`)
+13. **Create Response Shape Variance**: `POST /meals/sittings` can return `data` as a list for single-item create responses
 
 ### Common Patterns
 - Both APIs use bearer token authentication

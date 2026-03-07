@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple, NamedTuple
 from dataclasses import dataclass
 
-from .models import ListItem
+from .models import ListItem, RecipeSyncLink
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,9 @@ class StateManager:
             self._create_paprika_meals_table()
             self._create_skylight_meals_table()
             self._create_meal_links_table()
+            self._create_recipe_links_table()
+            self._migrate_meal_schema()
+            self._ensure_meal_indexes()
 
             self.conn.commit()
             logger.info("StateManager database initialized successfully")
@@ -215,6 +218,8 @@ class StateManager:
             meal_date TEXT NOT NULL,  -- ISO date format
             meal_type TEXT NOT NULL,  -- breakfast, lunch, dinner, snack
             recipe_uid TEXT,
+            paprika_recipe_hash TEXT,
+            linked_skylight_id TEXT,
             notes TEXT,
             -- Timestamps
             paprika_timestamp TEXT,  -- ISO 8601 format
@@ -238,6 +243,7 @@ class StateManager:
             meal_name TEXT NOT NULL,
             meal_date TEXT NOT NULL,  -- ISO date format
             meal_type TEXT NOT NULL,  -- breakfast, lunch, dinner, snack
+            meal_recipe_id TEXT,
             notes TEXT,
             -- Timestamps
             skylight_timestamp TEXT, -- ISO 8601 format
@@ -269,6 +275,50 @@ class StateManager:
         CREATE INDEX IF NOT EXISTS idx_meal_links_confidence ON meal_links(confidence_score);
         """
         self.conn.executescript(schema_sql)
+
+    def _create_recipe_links_table(self) -> None:
+        """Create Paprika->Skylight recipe mapping table"""
+        schema_sql = """
+        CREATE TABLE IF NOT EXISTS recipe_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paprika_recipe_uid TEXT NOT NULL UNIQUE,
+            skylight_recipe_id TEXT NOT NULL,
+            paprika_hash TEXT,
+            last_synced_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_recipe_links_paprika_uid ON recipe_links(paprika_recipe_uid);
+        CREATE INDEX IF NOT EXISTS idx_recipe_links_skylight_id ON recipe_links(skylight_recipe_id);
+        """
+        self.conn.executescript(schema_sql)
+
+    def _migrate_meal_schema(self) -> None:
+        """Add meal columns for newer sync behavior if missing in existing DBs."""
+        self._ensure_column("paprika_meals", "paprika_recipe_hash", "TEXT")
+        self._ensure_column("paprika_meals", "linked_skylight_id", "TEXT")
+        self._ensure_column("skylight_meals", "meal_recipe_id", "TEXT")
+
+    def _ensure_meal_indexes(self) -> None:
+        """
+        Create indexes that depend on migrated columns.
+        This must run after _migrate_meal_schema for older DBs.
+        """
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_paprika_meals_linked_skylight_id ON paprika_meals(linked_skylight_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_skylight_meals_recipe_id ON skylight_meals(meal_recipe_id)"
+        )
+
+    def _ensure_column(self, table_name: str, column_name: str, column_type_sql: str) -> None:
+        """Add a column if it does not exist."""
+        cursor = self.conn.cursor()
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        columns = {row["name"] for row in cursor.fetchall()}
+        if column_name in columns:
+            return
+        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type_sql}")
 
     def close(self) -> None:
         """Close database connection"""
@@ -823,15 +873,18 @@ class StateManager:
                 # Save to paprika_meals table
                 cursor.execute("""
                     INSERT OR REPLACE INTO paprika_meals (
-                        paprika_id, meal_name, meal_date, meal_type, recipe_uid, notes,
+                        paprika_id, meal_name, meal_date, meal_type, recipe_uid,
+                        paprika_recipe_hash, linked_skylight_id, notes,
                         paprika_timestamp, last_synced_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     meal.paprika_id,
                     meal.name,
                     meal.date.isoformat(),
                     meal.meal_type,
                     meal.recipe_uid,
+                    meal.paprika_recipe_hash,
+                    meal.skylight_id,
                     meal.notes,
                     meal.paprika_timestamp.isoformat() if meal.paprika_timestamp else None,
                     now
@@ -843,14 +896,15 @@ class StateManager:
                 # Save to skylight_meals table
                 cursor.execute("""
                     INSERT OR REPLACE INTO skylight_meals (
-                        skylight_id, meal_name, meal_date, meal_type, notes,
-                        skylight_timestamp, last_synced_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        skylight_id, meal_name, meal_date, meal_type, meal_recipe_id,
+                        notes, skylight_timestamp, last_synced_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     meal.skylight_id,
                     meal.name,
                     meal.date.isoformat(),
                     meal.meal_type,
+                    meal.skylight_recipe_id,
                     meal.notes,
                     meal.skylight_timestamp.isoformat() if meal.skylight_timestamp else None,
                     now
@@ -902,6 +956,8 @@ class StateManager:
                     p.paprika_id,
                     s.skylight_id,
                     p.recipe_uid,
+                    p.paprika_recipe_hash,
+                    s.meal_recipe_id as skylight_recipe_id,
                     COALESCE(p.notes, s.notes) as notes,
                     p.paprika_timestamp,
                     s.skylight_timestamp
@@ -935,6 +991,8 @@ class StateManager:
                     paprika_id=row['paprika_id'],
                     skylight_id=row['skylight_id'],
                     recipe_uid=row['recipe_uid'],
+                    paprika_recipe_hash=row['paprika_recipe_hash'],
+                    skylight_recipe_id=row['skylight_recipe_id'],
                     notes=row['notes'],
                     paprika_timestamp=paprika_timestamp,
                     skylight_timestamp=skylight_timestamp
@@ -981,3 +1039,123 @@ class StateManager:
         except Exception as e:
             logger.error(f"Failed to mark meal as deleted: {e}")
             raise
+
+    def get_paprika_meals_by_ids(self, paprika_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Get persisted Paprika meal rows keyed by Paprika meal UID."""
+        if not paprika_ids:
+            return {}
+
+        placeholders = ",".join("?" for _ in paprika_ids)
+        cursor = self.conn.cursor()
+        cursor.execute(
+            f"""
+            SELECT paprika_id, meal_name, meal_date, meal_type, recipe_uid, paprika_recipe_hash,
+                   linked_skylight_id, notes, paprika_timestamp, deleted
+            FROM paprika_meals
+            WHERE paprika_id IN ({placeholders})
+            """,
+            paprika_ids,
+        )
+        rows = cursor.fetchall()
+        return {row["paprika_id"]: dict(row) for row in rows}
+
+    def get_active_paprika_meals_in_range(self, date_start, date_end) -> Dict[str, Dict[str, Any]]:
+        """Get non-deleted Paprika meal rows in date range keyed by Paprika meal UID."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT paprika_id, meal_name, meal_date, meal_type, recipe_uid, paprika_recipe_hash,
+                   linked_skylight_id, notes, paprika_timestamp, deleted
+            FROM paprika_meals
+            WHERE deleted = 0
+              AND meal_date >= ?
+              AND meal_date <= ?
+            """,
+            (date_start.isoformat(), date_end.isoformat()),
+        )
+        rows = cursor.fetchall()
+        return {row["paprika_id"]: dict(row) for row in rows}
+
+    def clear_meal_link_by_skylight_id(self, skylight_id: str) -> None:
+        """Clear linked skylight ID from paprika_meals rows when a sitting is deleted."""
+        cursor = self.conn.cursor()
+        now = datetime.now(timezone.utc).isoformat()
+        cursor.execute(
+            """
+            UPDATE paprika_meals
+            SET linked_skylight_id = NULL, last_synced_at = ?
+            WHERE linked_skylight_id = ?
+            """,
+            (now, skylight_id),
+        )
+        self.conn.commit()
+
+    def upsert_recipe_link(
+        self,
+        paprika_recipe_uid: str,
+        skylight_recipe_id: str,
+        paprika_hash: Optional[str] = None,
+    ) -> RecipeSyncLink:
+        """Create or update a Paprika->Skylight recipe link."""
+        now = datetime.now(timezone.utc)
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO recipe_links (paprika_recipe_uid, skylight_recipe_id, paprika_hash, last_synced_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(paprika_recipe_uid) DO UPDATE SET
+                skylight_recipe_id = excluded.skylight_recipe_id,
+                paprika_hash = excluded.paprika_hash,
+                last_synced_at = excluded.last_synced_at
+            """,
+            (paprika_recipe_uid, skylight_recipe_id, paprika_hash, now.isoformat()),
+        )
+        self.conn.commit()
+        return RecipeSyncLink(
+            paprika_recipe_uid=paprika_recipe_uid,
+            skylight_recipe_id=skylight_recipe_id,
+            paprika_hash=paprika_hash,
+            last_synced_at=now,
+        )
+
+    def get_recipe_link(self, paprika_recipe_uid: str) -> Optional[RecipeSyncLink]:
+        """Get recipe link by Paprika recipe UID."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT paprika_recipe_uid, skylight_recipe_id, paprika_hash, last_synced_at
+            FROM recipe_links
+            WHERE paprika_recipe_uid = ?
+            """,
+            (paprika_recipe_uid,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return RecipeSyncLink(
+            paprika_recipe_uid=row["paprika_recipe_uid"],
+            skylight_recipe_id=row["skylight_recipe_id"],
+            paprika_hash=row["paprika_hash"],
+            last_synced_at=self._parse_datetime(row["last_synced_at"]),
+        )
+
+    def get_all_recipe_links(self) -> Dict[str, RecipeSyncLink]:
+        """Get all recipe links keyed by Paprika recipe UID."""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT paprika_recipe_uid, skylight_recipe_id, paprika_hash, last_synced_at
+            FROM recipe_links
+            """
+        )
+        rows = cursor.fetchall()
+        links: Dict[str, RecipeSyncLink] = {}
+        for row in rows:
+            link = RecipeSyncLink(
+                paprika_recipe_uid=row["paprika_recipe_uid"],
+                skylight_recipe_id=row["skylight_recipe_id"],
+                paprika_hash=row["paprika_hash"],
+                last_synced_at=self._parse_datetime(row["last_synced_at"]),
+            )
+            links[link.paprika_recipe_uid] = link
+        return links

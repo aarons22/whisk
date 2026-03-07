@@ -519,3 +519,55 @@ class PaprikaClient:
         except Exception as e:
             logger.error(f"Failed to get meal plans from Paprika: {e}")
             raise
+
+    def get_recipe_index(self) -> List[Dict[str, str]]:
+        """
+        Get lightweight recipe index from Paprika for hash-based change detection.
+
+        Returns:
+            List of dicts with keys: uid, hash
+        """
+        try:
+            logger.debug("Fetching Paprika recipe index...")
+            result = self._make_request("GET", "/v2/sync/recipes/")
+            recipes = result.get("result", [])
+
+            # Normalize to only expected fields
+            normalized = []
+            for recipe in recipes:
+                uid = recipe.get("uid")
+                if not uid:
+                    continue
+                normalized.append({
+                    "uid": uid,
+                    "hash": recipe.get("hash")
+                })
+
+            logger.info(f"Retrieved {len(normalized)} recipe hashes from Paprika")
+            return normalized
+
+        except Exception as e:
+            logger.error(f"Failed to get recipe index from Paprika: {e}")
+            raise
+
+    def get_recipe_details(self, recipe_uid: str) -> Dict[str, Any]:
+        """
+        Get full recipe payload from Paprika.
+
+        Args:
+            recipe_uid: Paprika recipe UID
+
+        Returns:
+            Full recipe dict from Paprika API
+        """
+        try:
+            logger.debug(f"Fetching Paprika recipe details: {recipe_uid}")
+            result = self._make_request("GET", f"/v2/sync/recipe/{recipe_uid}/")
+            recipe = result.get("result")
+            if not recipe:
+                raise Exception(f"No recipe result returned for UID {recipe_uid}")
+            return recipe
+
+        except Exception as e:
+            logger.error(f"Failed to get recipe details from Paprika ({recipe_uid}): {e}")
+            raise

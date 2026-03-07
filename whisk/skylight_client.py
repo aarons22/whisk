@@ -641,6 +641,121 @@ class SkylightClient:
             logger.error(f"Failed to remove item from Skylight: {e}")
             raise
 
+    def get_meal_recipes(self) -> List[Dict[str, Any]]:
+        """
+        Get meal recipes from Skylight frame.
+
+        Returns:
+            List of meal recipe dictionaries
+        """
+        try:
+            endpoint = f"/frames/{self.frame_id}/meals/recipes?include=meal_category"
+            result = self._make_request("GET", endpoint)
+            if result is None:
+                return []
+
+            data = result.get("data", []) if isinstance(result, dict) else []
+            included = result.get("included", []) if isinstance(result, dict) else []
+            meal_categories = {item["id"]: item for item in included if item.get("type") == "meal_category"}
+            recipes: List[Dict[str, Any]] = []
+
+            for item in data:
+                if item.get("type") != "meal_recipe":
+                    continue
+
+                attrs = item.get("attributes", {})
+                rel = item.get("relationships", {})
+                category_data = rel.get("meal_category", {}).get("data")
+                category_id = category_data.get("id") if isinstance(category_data, dict) else None
+                category_label = None
+                if category_id and category_id in meal_categories:
+                    category_label = meal_categories[category_id].get("attributes", {}).get("label")
+
+                recipes.append({
+                    "id": item.get("id"),
+                    "summary": attrs.get("summary") or "",
+                    "description": attrs.get("description") or "",
+                    "meal_category_id": category_id,
+                    "meal_category": category_label,
+                })
+
+            logger.info(f"Retrieved {len(recipes)} meal recipes from Skylight")
+            return recipes
+
+        except Exception as e:
+            logger.error(f"Failed to get meal recipes from Skylight: {e}")
+            raise
+
+    def create_meal_recipe(self, summary: str, description: str, meal_type: str) -> str:
+        """
+        Create a meal recipe in Skylight.
+
+        Args:
+            summary: Recipe title
+            description: Recipe body text
+            meal_type: Meal category type
+
+        Returns:
+            Skylight meal recipe ID
+        """
+        try:
+            meal_category_id = self._get_meal_category_id(meal_type)
+            if not meal_category_id:
+                raise Exception(f"Could not find meal category for type: {meal_type}")
+
+            payload = {
+                "summary": summary,
+                "description": description,
+                "meal_category_id": meal_category_id
+            }
+
+            endpoint = f"/frames/{self.frame_id}/meals/recipes?include=meal_category"
+            result = self._make_request("POST", endpoint, payload)
+            recipe_id = self._extract_jsonapi_id(result)
+            if not recipe_id:
+                raise Exception("No recipe ID returned from create meal recipe request")
+
+            logger.info(f"Created Skylight meal recipe: {summary} (id={recipe_id})")
+            return recipe_id
+
+        except Exception as e:
+            logger.error(f"Failed to create meal recipe in Skylight: {e}")
+            raise
+
+    def update_meal_recipe(self, recipe_id: str, summary: str, description: str, meal_type: str) -> None:
+        """
+        Update an existing meal recipe in Skylight.
+
+        Args:
+            recipe_id: Skylight meal recipe ID
+            summary: Recipe title
+            description: Recipe body text
+            meal_type: Meal category type
+        """
+        try:
+            meal_category_id = self._get_meal_category_id(meal_type)
+            if not meal_category_id:
+                raise Exception(f"Could not find meal category for type: {meal_type}")
+
+            payload = {
+                "summary": summary,
+                "description": description,
+                "meal_category_id": meal_category_id
+            }
+
+            endpoint = f"/frames/{self.frame_id}/meals/recipes/{recipe_id}?include=meal_category"
+            # Docs indicate PUT; PATCH is used elsewhere in this codebase and should also work.
+            try:
+                self._make_request("PUT", endpoint, payload)
+            except Exception:
+                self._make_request("PATCH", endpoint, payload)
+
+            logger.info(f"Updated Skylight meal recipe: {recipe_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to update meal recipe in Skylight: {e}")
+            raise
+
     def get_meal_sittings(self, start_date, end_date):
         """
         Get meal sittings for a date range from Skylight calendar
@@ -732,6 +847,9 @@ class SkylightClient:
                         "date": meal_date,
                         "meal_category": meal_category_label,
                         "meal_type": meal_category_label.lower() if meal_category_label else "",
+                        "meal_recipe_id": meal_recipe_id,
+                        "description": attributes.get("description"),
+                        "note": attributes.get("note"),
                         "parsed_date": parsed_date,
                         "attributes": attributes,
                         "relationships": relationships
@@ -745,7 +863,15 @@ class SkylightClient:
             logger.error(f"Failed to get meal sittings from Skylight: {e}")
             raise
 
-    def create_meal_sitting(self, name: str, date, meal_type: str):
+    def create_meal_sitting(
+        self,
+        name: str,
+        date,
+        meal_type: str,
+        meal_recipe_id: Optional[str] = None,
+        note: Optional[str] = None,
+        description: Optional[str] = None,
+    ):
         """
         Create a meal sitting in Skylight calendar
 
@@ -765,18 +891,22 @@ class SkylightClient:
             if not meal_category_id:
                 raise Exception(f"Could not find meal category for type: {meal_type}")
 
-            # Use the actual payload format discovered from browser inspection
+            # Use the payload format discovered from browser inspection
             sitting_data = {
-                "meal_recipe_id": None,
+                "meal_recipe_id": meal_recipe_id,
                 "meal_category_id": meal_category_id,
                 "add_to_grocery_list": False,
                 "date": date.isoformat(),
-                "note": "",
+                "note": note,
                 "rrule": None,
-                "summary": name,
-                "description": "",
+                "description": description,
                 "saveToRecipeBox": False
             }
+            # Skylight requires summary to be blank when meal_recipe_id is set.
+            if meal_recipe_id:
+                sitting_data["summary"] = None
+            else:
+                sitting_data["summary"] = name
 
             # Use the correct endpoint with date range parameters (as seen in browser)
             params_str = f"?date_min={date.isoformat()}&date_max={date.isoformat()}&include=meal_category%2Cmeal_recipe"
@@ -788,28 +918,10 @@ class SkylightClient:
             logger.debug(f"Meal creation response: {result} (type: {type(result)})")
 
             # Extract created meal ID from response
-            if isinstance(result, dict):
-                # JSON:API format response
-                created_meal = result.get("data", {})
-                if created_meal:
-                    meal_id = created_meal.get("id")
-                    if meal_id:
-                        logger.info(f"Created meal sitting in Skylight: {name} (id={meal_id})")
-                        return str(meal_id)
-
-                # If no data field, try direct response
-                if "id" in result:
-                    meal_id = result["id"]
-                    logger.info(f"Created meal sitting in Skylight: {name} (id={meal_id})")
-                    return str(meal_id)
-            elif isinstance(result, list):
-                # Response is a list - take the first item
-                if result and len(result) > 0:
-                    first_item = result[0]
-                    if isinstance(first_item, dict) and "id" in first_item:
-                        meal_id = first_item["id"]
-                        logger.info(f"Created meal sitting in Skylight: {name} (id={meal_id})")
-                        return str(meal_id)
+            meal_id = self._extract_jsonapi_id(result)
+            if meal_id:
+                logger.info(f"Created meal sitting in Skylight: {name} (id={meal_id})")
+                return meal_id
 
             # Log the full response to understand the format
             logger.warning(f"Unexpected response format from meal creation: {result}")
@@ -890,7 +1002,16 @@ class SkylightClient:
             logger.error(f"Failed to get meal category ID: {e}")
             return None
 
-    def update_meal_sitting(self, sitting_id: str, name: str, date, meal_type: str):
+    def update_meal_sitting(
+        self,
+        sitting_id: str,
+        name: str,
+        date,
+        meal_type: str,
+        meal_recipe_id: Optional[str] = None,
+        note: Optional[str] = None,
+        description: Optional[str] = None,
+    ):
         """
         Update a meal sitting in Skylight calendar
 
@@ -909,16 +1030,20 @@ class SkylightClient:
 
             # Use the same payload format as creation (discovered from browser)
             sitting_data = {
-                "meal_recipe_id": None,
+                "meal_recipe_id": meal_recipe_id,
                 "meal_category_id": meal_category_id,
                 "add_to_grocery_list": False,
                 "date": date.isoformat(),
-                "note": "",
+                "note": note,
                 "rrule": None,
-                "summary": name,
-                "description": "",
+                "description": description,
                 "saveToRecipeBox": False
             }
+            # Skylight requires summary to be blank when meal_recipe_id is set.
+            if meal_recipe_id:
+                sitting_data["summary"] = None
+            else:
+                sitting_data["summary"] = name
 
             # Try instance-based update first (similar to delete endpoint)
             try:
@@ -938,6 +1063,25 @@ class SkylightClient:
         except Exception as e:
             logger.error(f"Failed to update meal sitting in Skylight: {e}")
             raise
+
+    def _extract_jsonapi_id(self, result: Any) -> Optional[str]:
+        """Extract first resource ID from common JSON:API response shapes."""
+        if isinstance(result, dict):
+            data = result.get("data")
+            if isinstance(data, dict):
+                resource_id = data.get("id")
+                return str(resource_id) if resource_id else None
+            if isinstance(data, list) and data:
+                first = data[0]
+                if isinstance(first, dict) and first.get("id"):
+                    return str(first["id"])
+            if result.get("id"):
+                return str(result["id"])
+        elif isinstance(result, list) and result:
+            first = result[0]
+            if isinstance(first, dict) and first.get("id"):
+                return str(first["id"])
+        return None
 
     def delete_meal_sitting(self, sitting_id: str, date=None):
         """

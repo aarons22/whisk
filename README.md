@@ -15,9 +15,9 @@ Whisk automatically syncs your grocery lists and meal plans between Paprika Reci
 ### 🍽️ Meal Plan Sync
 - **One-way sync** from Paprika meal plans to Skylight calendar
 - **Multiple meal types** - breakfast, lunch, dinner, and snacks
-- **Intelligent combination** - multiple meals of same type combine automatically
-  - Example: "Grilled Salmon + Caesar Salad + Bread" for multiple dinner items
-- **Recipe integration** - syncs both recipe-based and text-only meals
+- **Per-meal fidelity** - each Paprika meal becomes its own Skylight sitting
+  - Multiple dinners on one day remain separate dinner entries
+- **Recipe integration** - syncs full Paprika recipe content + recipe reference for recipe-based meals
 - **Date range control** - configurable sync window (default: 7 days ahead)
 
 ## Important Notes
@@ -77,11 +77,11 @@ This lets you pair up additional lists between Paprika and Skylight.
 During setup, you can configure:
 - **Meal types to sync**: breakfast, lunch, dinner, snacks (all enabled by default)
 - **Sync window**: how many days ahead to sync meals (default: 7 days)
-- **Combination behavior**: how multiple meals of same type are handled
+- **Entry behavior**: one Paprika meal entry maps to one Skylight sitting
 
-**Example meal combinations:**
-- Multiple breakfasts: "Oatmeal + Toast + Coffee"
-- Multiple dinners: "Salmon + Vegetables + Salad"
+**Examples:**
+- Multiple breakfasts in Paprika become multiple breakfast sittings in Skylight
+- Recipe meals in Paprika include synced recipe reference + full recipe body in Skylight recipe
 
 ## How It Works
 
@@ -95,17 +95,17 @@ Check "Bread"  ←    minute         ←   Check "Bread"
 ### Meal Plan Sync (Paprika → Skylight)
 ```
 📱 Paprika Meal Plan                📺 Skylight Calendar
-Feb 15 Breakfast: Oatmeal      →   Feb 15 Breakfast: "Oatmeal + Toast"
-Feb 15 Breakfast: Toast        ↗
-Feb 15 Dinner: Salmon          →   Feb 15 Dinner: "Salmon + Salad"
-Feb 15 Dinner: Salad           ↗
+Feb 15 Breakfast: Oatmeal      →   Feb 15 Breakfast: Oatmeal
+Feb 15 Breakfast: Toast        →   Feb 15 Breakfast: Toast
+Feb 15 Dinner: Salmon          →   Feb 15 Dinner: Salmon
+Feb 15 Dinner: Salad           →   Feb 15 Dinner: Salad
 ```
 
-**Smart Combination Logic:**
-- Multiple meals of same type + date = combined entry
-- Single meals = unchanged
-- Different types = separate entries
-- Preserves meal notes and recipe information
+**Sync Behavior:**
+- One Paprika meal entry = one Skylight meal sitting
+- Recipe-based meals sync a linked Skylight meal recipe
+- Full recipe content is synced from Paprika
+- Paprika is source of truth for recipe data
 
 ## Common Commands
 
@@ -132,9 +132,8 @@ whisk upgrade    # Update to latest version
 - Verify your Skylight frame has meal calendar functionality enabled
 
 **Multiple meals not combining?**
-- This is expected behavior when meals have different types (breakfast vs lunch)
-- Multiple meals of the same type on the same day will combine automatically
-- Example: 2 breakfast items become "Item1 + Item2"
+- This is expected behavior: meals are intentionally kept as separate sittings
+- Multiple meals of the same type on the same day stay separate in Skylight
 
 **Command not found?**
 - Restart your terminal after installation
