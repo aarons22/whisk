@@ -876,30 +876,42 @@ Authorization: Token token="<base64_token>"
   "data": [
     {
       "id": "breakfast_category_id",
-      "type": "meal_categories",
+      "type": "meal_category",
       "attributes": {
-        "label": "Breakfast"
+        "label": "Breakfast",
+        "color": "#A8D4D3",
+        "enabled": true,
+        "position": 0
       }
     },
     {
       "id": "lunch_category_id",
-      "type": "meal_categories",
+      "type": "meal_category",
       "attributes": {
-        "label": "Lunch"
+        "label": "Lunch",
+        "color": "#F66951",
+        "enabled": true,
+        "position": 1
       }
     },
     {
       "id": "dinner_category_id",
-      "type": "meal_categories",
+      "type": "meal_category",
       "attributes": {
-        "label": "Dinner"
+        "label": "Dinner",
+        "color": "#915EA1",
+        "enabled": true,
+        "position": 2
       }
     },
     {
-      "id": "snacks_category_id",
-      "type": "meal_categories",
+      "id": "snack_category_id",
+      "type": "meal_category",
       "attributes": {
-        "label": "Snacks"
+        "label": "Snack",
+        "color": "#FDC36D",
+        "enabled": false,
+        "position": 3
       }
     }
   ]
@@ -909,7 +921,7 @@ Authorization: Token token="<base64_token>"
 #### Get Meal Sittings (Date Range)
 **Request:**
 ```http
-GET /frames/{frameId}/meals/sittings?filter[date_from]=2024-01-15&filter[date_to]=2024-01-20&include=meal_category,meal_recipe
+GET /frames/{frameId}/meals/sittings?date_min=2026-03-01&date_max=2026-04-01&include=meal_category,meal_recipe
 Authorization: Token token="<base64_token>"
 ```
 
@@ -922,7 +934,11 @@ Authorization: Token token="<base64_token>"
       "type": "meal_sitting",
       "attributes": {
         "summary": "Pancakes and Eggs",
-        "date": "2024-01-15"
+        "description": "",
+        "note": "",
+        "rrule": null,
+        "recurring": false,
+        "instances": ["2026-03-01"]
       },
       "relationships": {
         "meal_category": {
@@ -945,7 +961,10 @@ Authorization: Token token="<base64_token>"
       "id": "breakfast_category_id",
       "type": "meal_category",
       "attributes": {
-        "label": "Breakfast"
+        "label": "Breakfast",
+        "color": "#A8D4D3",
+        "enabled": true,
+        "position": 0
       }
     },
     {
@@ -955,64 +974,129 @@ Authorization: Token token="<base64_token>"
         "summary": "Pancakes and Eggs Recipe"
       }
     }
-  ]
+  ],
+  "meta": {
+    "date_min": "2026-03-01",
+    "date_max": "2026-04-01"
+  }
 }
 ```
 
 **Key Fields:**
 - `id`: Skylight meal sitting ID
 - `attributes.summary`: Meal name/description
-- `attributes.date`: Meal date (YYYY-MM-DD)
+- `attributes.instances[]`: One or more meal dates (YYYY-MM-DD)
+- `attributes.rrule`: Recurrence rule when recurring
+- `attributes.recurring`: Whether sitting is recurring
 - `meal_category.label`: Meal type (Breakfast, Lunch, Dinner, Snacks)
 
 #### Create Meal Sitting
 **Request:**
 ```http
-POST /frames/{frameId}/meals/sittings
+POST /frames/{frameId}/meals/sittings?date_min=2026-03-01&date_max=2026-04-01&include=meal_category,meal_recipe
 Authorization: Token token="<base64_token>"
 Content-Type: application/json
 
 {
-  "meal_recipe_id": null,
-  "meal_category_id": "breakfast_category_id",
-  "summary": "Oatmeal with Berries",
-  "date": "2024-01-15"
+  "meal_recipe_id": "recipe456",
+  "meal_category_id": "dinner_category_id",
+  "add_to_grocery_list": false,
+  "date": "2026-03-01",
+  "note": null,
+  "rrule": null,
+  "description": null
 }
 ```
 
 **Response:**
 ```json
 {
-  "id": "new_sitting_id"
+  "data": [
+    {
+      "id": "new_sitting_id",
+      "type": "meal_sitting",
+      "attributes": {
+        "summary": "Pancakes and Eggs",
+        "description": "",
+        "note": null,
+        "rrule": null,
+        "recurring": false,
+        "instances": ["2026-03-01"]
+      },
+      "relationships": {
+        "meal_category": {
+          "data": {
+            "id": "dinner_category_id",
+            "type": "meal_category"
+          }
+        },
+        "meal_recipe": {
+          "data": {
+            "id": "recipe456",
+            "type": "meal_recipe"
+          }
+        }
+      }
+    }
+  ],
+  "included": [
+    {
+      "id": "dinner_category_id",
+      "type": "meal_category",
+      "attributes": {
+        "label": "Dinner"
+      }
+    },
+    {
+      "id": "recipe456",
+      "type": "meal_recipe",
+      "attributes": {
+        "summary": "Pancakes and Eggs Recipe"
+      }
+    }
+  ],
+  "meta": {
+    "date_min": "2026-03-01",
+    "date_max": "2026-04-01"
+  }
 }
 ```
 
-#### Update Meal Sitting
+**Observed Behavior (Live Validation):**
+- Multiple meal sittings with the same `meal_category_id` and `date` can coexist (they are separate records, not upserts).
+- Validated on March 7, 2026: successfully created and read back 25 separate dinner sittings for the same date.
+- Practical limit was **not** reached at 25 entries.
+- Immediate `POST /meals/sittings` response may show `attributes.instances: []`; follow-up `GET` calls return the expected date in `instances`.
+
+#### Get Meal Sitting Instances (Single Sitting)
 **Request:**
 ```http
-PUT /frames/{frameId}/meals/sittings/{sittingId}
+GET /frames/{frameId}/meals/sittings/{sittingId}/instances?date_min=2026-03-01&date_max=2026-04-01&include=meal_category,meal_recipe
 Authorization: Token token="<base64_token>"
-Content-Type: application/json
-
-{
-  "meal_recipe_id": null,
-  "meal_category_id": "breakfast_category_id",
-  "summary": "Updated Oatmeal with Berries",
-  "date": "2024-01-15"
-}
 ```
 
-#### Delete Meal Sitting
+#### Delete Meal Sitting Instance
 **Request:**
 ```http
-DELETE /frames/{frameId}/meals/sittings/{sittingId}
+DELETE /frames/{frameId}/meals/sittings/{sittingId}/instances/{date}?date_min=2026-03-01&date_max=2026-04-01&include=meal_category,meal_recipe
 Authorization: Token token="<base64_token>"
 ```
 
 **Response:**
-```http
-200 OK
+```json
+{
+  "data": [],
+  "included": [],
+  "meta": {
+    "date_min": "2026-03-01",
+    "date_max": "2026-04-01",
+    "deleted_sitting_ids": [28931735]
+  }
+}
 ```
+
+#### Update Meal Sitting (Unverified In This HAR)
+No `PUT /frames/{frameId}/meals/sittings/{sittingId}` calls were captured in `ourskylight.com2.har`. Keep this endpoint as unverified until a request/response sample is recorded.
 
 ---
 
@@ -1037,12 +1121,15 @@ Authorization: Token token="<base64_token>"
 ### Skylight Specific
 1. **JSON:API Format**: All responses follow JSON:API specification
 2. **Include Parameter**: Use `?include=` for relationship data
-3. **Date Filtering**: Use `filter[date_from]` and `filter[date_to]` parameters
+3. **Date Filtering**: Meal sittings use `date_min` and `date_max` query parameters
 4. **Meal Categories**: Must map meal types to category IDs via `/meals/categories`
 5. **Individual Deletion Broken**: Only bulk destroy endpoint works for list item deletion
 6. **Meal Recipes API**: `GET/POST /meals/recipes` and `GET /meals/recipes/{id}` are functional with `include=meal_category`
 7. **Recipe to Grocery Bridge**: `POST /meals/recipes/{id}/add_to_grocery_list` returns `meta.auto_creation_intent_id`
 8. **Recipe Types**: Recipe objects use `type: "meal_recipe"` with category relationship `type: "meal_category"`
+9. **Sitting Instance Deletion**: Observed delete path is `DELETE /meals/sittings/{sittingId}/instances/{date}` (not base `/meals/sittings/{sittingId}`)
+10. **Multiple Sittings Per Day**: Observed that at least 25 distinct sittings can exist for the same date and meal category (e.g., dinner) without API rejection
+11. **Create Response Timing**: Newly created sittings may return `instances: []` in immediate POST response, but subsequent GET endpoints return the correct date instances
 
 ### Common Patterns
 - Both APIs use bearer token authentication
