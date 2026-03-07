@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Removed features go here
 
+## [0.0.5] - 2026-03-07
+
+### Changed
+- Changed `whisk upgrade` to use the active Python interpreter when running inside a virtual environment
+- Changed dependency upgrade fallback behavior to retry with `--break-system-packages --user` when non-venv installs fail
+
+### Fixed
+- Fixed upgrade failures on externally managed Python environments by broadening fallback handling beyond a single error-string match
+- Fixed upgrade error output to show clearer recovery steps for creating and using `~/.whisk/venv`
+
 ## [0.0.4] - 2026-03-07
 
 ### Added
@@ -69,7 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bulk operations for efficient sync operations
 - Deletion detection and handling (Paprika → Skylight)
 
-[Unreleased]: https://github.com/aarons22/whisk/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/aarons22/whisk/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/aarons22/whisk/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/aarons22/whisk/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/aarons22/whisk/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/aarons22/whisk/compare/v0.0.1...v0.0.2
