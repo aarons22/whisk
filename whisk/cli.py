@@ -40,7 +40,7 @@ def cmd_sync(args) -> int:
     from .config import ConfigManager
 
     try:
-        config_manager = ConfigManager()
+        config_manager = ConfigManager(args.config_dir)
         if not config_manager.config_exists():
             print("❌ No configuration found. Run 'whisk setup' first.")
             return 1
@@ -154,7 +154,7 @@ def cmd_start(args) -> int:
     from .config import ConfigManager
 
     try:
-        config_manager = ConfigManager()
+        config_manager = ConfigManager(args.config_dir)
         if not config_manager.config_exists():
             print("❌ No configuration found. Run 'whisk setup' first.")
             return 1
@@ -185,7 +185,7 @@ def cmd_stop(args) -> int:
     from .config import ConfigManager
 
     try:
-        config_manager = ConfigManager()
+        config_manager = ConfigManager(args.config_dir)
         config = None
         if config_manager.config_exists():
             config = config_manager.load_config()
@@ -204,7 +204,7 @@ def cmd_status(args) -> int:
     from .config import ConfigManager
 
     try:
-        config_manager = ConfigManager()
+        config_manager = ConfigManager(args.config_dir)
         config = None
         if config_manager.config_exists():
             config = config_manager.load_config()
@@ -250,7 +250,7 @@ def cmd_lists(args) -> int:
     from .config import ConfigManager
 
     try:
-        config_manager = ConfigManager()
+        config_manager = ConfigManager(args.config_dir)
 
         # Handle list pair management operations first
         if args.add:
@@ -368,7 +368,7 @@ def cmd_lists(args) -> int:
 def cmd_config(args) -> int:
     """Configuration management"""
     try:
-        config_manager = ConfigManager()
+        config_manager = ConfigManager(args.config_dir)
 
         if args.action == "show":
             if not config_manager.config_exists():
