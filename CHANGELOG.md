@@ -19,6 +19,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - Removed features go here
 
+## [0.0.7] - 2026-05-03
+
+### Added
+- Added `scripts/pull_external_api_specs.sh` to refresh local snapshots of canonical Paprika and Skylight API specs with pinned commit SHAs
+
+### Changed
+- Changed Skylight authentication to use OAuth2 authorization-code flow with bearer and refresh tokens for API access
+- Changed project API guidance to treat `paprika-tools` and `skylight-tools` repositories as canonical sources of truth
+
+### Fixed
+- Fixed `--config-dir` handling so sync, daemon, list, and config commands consistently use the selected configuration directory
+- Fixed Skylight authentication reliability by replacing the brittle multi-endpoint login approach with explicit token exchange and refresh handling
+
+### Removed
+- Removed obsolete API reference and debug/research artifacts that no longer match the current API-source-of-truth workflow
+
 ## [0.0.6] - 2026-03-07
 
 ### Changed
@@ -87,7 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bulk operations for efficient sync operations
 - Deletion detection and handling (Paprika → Skylight)
 
-[Unreleased]: https://github.com/aarons22/whisk/compare/v0.0.6...HEAD
+[Unreleased]: https://github.com/aarons22/whisk/compare/v0.0.7...HEAD
+[0.0.7]: https://github.com/aarons22/whisk/compare/v0.0.6...v0.0.7
 [0.0.6]: https://github.com/aarons22/whisk/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/aarons22/whisk/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/aarons22/whisk/compare/v0.0.3...v0.0.4

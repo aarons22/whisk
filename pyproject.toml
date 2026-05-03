@@ -1,6 +1,6 @@
 [project]
 name = "whisk"
-version = "0.0.6"
+version = "0.0.7"
 description = "Bidirectional sync for Paprika and Skylight grocery lists"
 requires-python = ">=3.10"
 dependencies = [
