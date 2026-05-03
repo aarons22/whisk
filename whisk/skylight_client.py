@@ -1,9 +1,11 @@
-"""Skylight API client with optimized authentication and token caching"""
+"""Skylight API client with OAuth2 Bearer token authentication"""
 
-import base64
 import json
 import logging
 import os
+import re
+import time
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -16,25 +18,21 @@ logger = logging.getLogger(__name__)
 
 
 class SkylightClient:
-    """Client for interacting with Skylight API with optimized authentication"""
+    """Client for interacting with Skylight API using OAuth2 Bearer tokens"""
 
     BASE_URL = "https://app.ourskylight.com/api"
+    AUTH_BASE = "https://app.ourskylight.com"
+    OAUTH_URL = "https://app.ourskylight.com/oauth/token"
+    CLIENT_ID = "skylight-mobile"
+    REDIRECT_URI = "https://ourskylight.com/welcome"
 
     def __init__(self, email: str, password: str, frame_id: str, token_cache_file: str = "skylight_token"):
-        """
-        Initialize Skylight client with credentials
-
-        Args:
-            email: Skylight account email
-            password: Skylight account password
-            frame_id: Skylight frame ID (e.g., "4878053")
-            token_cache_file: Path to token cache file
-        """
         self.email = email
         self.password = password
         self.frame_id = frame_id
-        self.user_id: Optional[str] = None
-        self.auth_token: Optional[str] = None
+        self.access_token: Optional[str] = None
+        self.refresh_token: Optional[str] = None
+        self._token_expires_at: float = 0.0
         self.token_cache_file = Path(token_cache_file)
         self._session = requests.Session()
         self._user_data: Optional[Dict[str, Any]] = None
@@ -42,189 +40,175 @@ class SkylightClient:
         self._lists_cache: Optional[List[Dict[str, Any]]] = None
 
     def authenticate(self) -> None:
-        """Authenticate with Skylight API using optimized approach with token caching"""
-        # Try loading cached token first
+        """Authenticate with Skylight, using cached token or full OAuth login."""
         if self._load_cached_token():
             logger.debug("Using cached Skylight token")
             return
+        logger.info("Authenticating with Skylight via OAuth...")
+        self._do_login()
+        logger.info("Skylight authenticated successfully")
 
-        try:
-            logger.info("Authenticating with Skylight...")
+    def _do_login(self) -> None:
+        """Full 4-step OAuth Authorization Code flow."""
+        login_session = requests.Session()
 
-            # Try direct known method first (from CLAUDE.md research)
-            if self._authenticate_direct():
-                logger.info(f"✅ Skylight authenticated successfully (user_id: {self.user_id})")
-                self._cache_token()
-                return
+        # Step 1: fetch login page for CSRF token
+        resp = login_session.get(
+            f"{self.AUTH_BASE}/auth/session/new",
+            headers={"User-Agent": "SkylightMobile (web)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        match = re.search(r'<meta name="csrf-token" content="([^"]+)"', resp.text)
+        if not match:
+            raise Exception("Could not extract CSRF token from Skylight login page")
+        csrf_token = match.group(1)
 
-            # Fallback to multi-endpoint approach
-            logger.debug("Direct authentication failed, trying fallback methods...")
-            if self._authenticate_fallback():
-                logger.info(f"✅ Skylight authenticated via fallback (user_id: {self.user_id})")
-                self._cache_token()
-                return
+        # Step 2: submit credentials (form-encoded)
+        resp = login_session.post(
+            f"{self.AUTH_BASE}/auth/session",
+            data={
+                "authenticity_token": csrf_token,
+                "email": self.email,
+                "password": self.password,
+            },
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "SkylightMobile (web)",
+                "Referer": f"{self.AUTH_BASE}/auth/session/new",
+            },
+            timeout=15,
+        )
+        if resp.status_code >= 400:
+            raise Exception(f"Skylight login failed ({resp.status_code}): check email and password")
 
-            raise Exception("All authentication methods failed")
+        # Step 3: exchange session cookie for authorization code
+        authorize_url = f"{self.AUTH_BASE}/oauth/authorize?" + urllib.parse.urlencode({
+            "client_id": self.CLIENT_ID,
+            "redirect_uri": self.REDIRECT_URI,
+            "response_type": "code",
+            "scope": "everything",
+        })
+        resp = login_session.get(
+            authorize_url,
+            headers={"User-Agent": "SkylightMobile (web)"},
+            allow_redirects=False,
+            timeout=15,
+        )
+        location = resp.headers.get("Location", "")
+        parsed = urllib.parse.urlparse(location)
+        code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
+        if not code:
+            raise Exception(f"No authorization code in OAuth redirect: {location!r}")
 
-        except Exception as e:
-            logger.error(f"Failed to authenticate with Skylight: {e}")
-            raise
+        # Step 4: exchange code for bearer + refresh tokens
+        self._exchange_code(code)
+        self._cache_token()
 
-    def _authenticate_direct(self) -> bool:
-        """
-        Try direct authentication using known working endpoint from CLAUDE.md research
+    def _exchange_code(self, code: str) -> None:
+        """Exchange an authorization code for access + refresh tokens."""
+        resp = requests.post(
+            self.OAUTH_URL,
+            data={
+                "grant_type": "authorization_code",
+                "client_id": self.CLIENT_ID,
+                "code": code,
+                "redirect_uri": self.REDIRECT_URI,
+                "scope": "everything",
+            },
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "SkylightMobile (web)",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        self.access_token = data["access_token"]
+        self.refresh_token = data["refresh_token"]
+        self._token_expires_at = time.time() + data.get("expires_in", 7200)
 
-        Returns:
-            True if authentication succeeded, False otherwise
-        """
-        try:
-            url = f"{self.BASE_URL}/sessions"
-            payload = {
-                "user": {
-                    "email": self.email,
-                    "password": self.password
-                }
-            }
-
-            logger.debug("Trying direct authentication via /sessions endpoint")
-            response = self._session.post(url, json=payload, timeout=10)
-
-            if response.status_code == 200:
-                data = response.json()
-                logger.debug(f"Direct login response: {data}")
-
-                # Look for user_id and token
-                if "user_id" in data and "user_token" in data:
-                    self.user_id = str(data["user_id"])
-                    self.auth_token = data["user_token"]
-                    return True
-                elif "user_id" in data and "token" in data:
-                    self.user_id = str(data["user_id"])
-                    self.auth_token = data["token"]
-                    return True
-
-            logger.debug(f"Direct authentication failed with status {response.status_code}")
+    def _do_token_refresh(self) -> bool:
+        """Refresh access token using the stored refresh token. Returns True on success."""
+        if not self.refresh_token:
             return False
-
+        try:
+            resp = requests.post(
+                self.OAUTH_URL,
+                data={
+                    "grant_type": "refresh_token",
+                    "client_id": self.CLIENT_ID,
+                    "refresh_token": self.refresh_token,
+                    "scope": "everything",
+                },
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": "SkylightMobile (web)",
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            self.access_token = data["access_token"]
+            self.refresh_token = data.get("refresh_token", self.refresh_token)
+            self._token_expires_at = time.time() + data.get("expires_in", 7200)
+            self._cache_token()
+            logger.debug("Skylight token refreshed")
+            return True
         except Exception as e:
-            logger.debug(f"Direct authentication method failed: {e}")
+            logger.warning(f"Skylight token refresh failed: {e}")
             return False
-
-    def _authenticate_fallback(self) -> bool:
-        """
-        Fallback authentication using multiple endpoints and payload formats
-
-        Returns:
-            True if authentication succeeded, False otherwise
-        """
-        # Common endpoints to try for login
-        login_endpoints = [
-            "/sessions",
-            "/auth/login",
-            "/login",
-            "/user/login",
-            "/authenticate"
-        ]
-
-        for endpoint in login_endpoints:
-            try:
-                url = f"{self.BASE_URL}{endpoint}"
-
-                # Try with various payload formats
-                payloads_to_try = [
-                    {"user": {"email": self.email, "password": self.password}},
-                    {"email": self.email, "password": self.password},
-                    {"username": self.email, "password": self.password}
-                ]
-
-                for test_payload in payloads_to_try:
-                    logger.debug(f"Trying {endpoint} with payload format")
-                    response = self._session.post(url, json=test_payload, timeout=10)
-
-                    if response.status_code == 200:
-                        data = response.json()
-
-                        # Look for user_id and token in various response formats
-                        if "user_id" in data and ("token" in data or "auth_token" in data or "user_token" in data):
-                            self.user_id = str(data["user_id"])
-                            self.auth_token = data.get("user_token") or data.get("token") or data.get("auth_token")
-                            return True
-                        elif "data" in data:
-                            # JSON:API format
-                            data_obj = data["data"]
-                            if "id" in data_obj and "attributes" in data_obj:
-                                self.user_id = data_obj["id"]
-                                attrs = data_obj["attributes"]
-                                self.auth_token = attrs.get("user_token") or attrs.get("token") or attrs.get("auth_token")
-                                if self.auth_token:
-                                    return True
-
-                    elif response.status_code != 404:
-                        logger.debug(f"Endpoint {endpoint}: {response.status_code}")
-
-            except Exception as e:
-                logger.debug(f"Failed to try {endpoint}: {e}")
-                continue
-
-        return False
 
     def _cache_token(self) -> None:
-        """Cache authentication token to file to avoid repeated auth"""
+        """Persist current tokens to cache file."""
         try:
             token_data = {
-                "user_id": self.user_id,
-                "auth_token": self.auth_token,
-                "email": self.email
+                "email": self.email,
+                "access_token": self.access_token,
+                "refresh_token": self.refresh_token,
+                "expires_at": self._token_expires_at,
             }
             with open(self.token_cache_file, "w") as f:
                 json.dump(token_data, f)
-            # Set restrictive permissions (owner only)
             os.chmod(self.token_cache_file, 0o600)
             logger.debug(f"Cached Skylight token to {self.token_cache_file}")
         except Exception as e:
             logger.warning(f"Failed to cache Skylight token: {e}")
 
     def _load_cached_token(self) -> bool:
-        """
-        Load cached token if available
-
-        Returns:
-            True if token loaded successfully, False otherwise
-        """
+        """Load cached token. Refreshes automatically if expired. Returns True if usable."""
         try:
             if not self.token_cache_file.exists():
                 return False
-
             with open(self.token_cache_file, "r") as f:
-                token_data = json.load(f)
-
-            if token_data.get("email") != self.email:
-                logger.debug("Cached Skylight token is for different email")
+                data = json.load(f)
+            if data.get("email") != self.email:
+                logger.debug("Cached Skylight token is for a different email")
                 return False
-
-            self.user_id = token_data.get("user_id")
-            self.auth_token = token_data.get("auth_token")
-
-            if self.user_id and self.auth_token:
-                logger.debug("Loaded cached Skylight token")
-                return True
-
-            return False
-
+            access_token = data.get("access_token")
+            refresh_token = data.get("refresh_token")
+            expires_at = float(data.get("expires_at", 0))
+            if not access_token or not refresh_token:
+                return False
+            self.refresh_token = refresh_token
+            # Refresh proactively if within 60s of expiry
+            if time.time() >= expires_at - 60:
+                logger.debug("Cached token near/past expiry, refreshing...")
+                return self._do_token_refresh()
+            self.access_token = access_token
+            self._token_expires_at = expires_at
+            logger.debug("Loaded cached Skylight token")
+            return True
         except Exception as e:
             logger.debug(f"Failed to load cached Skylight token: {e}")
             return False
 
     def _ensure_authenticated(self) -> None:
-        """Ensure client is authenticated, trying cached token first"""
-        if self.user_id and self.auth_token:
+        """Ensure a valid access token is present."""
+        if self.access_token and time.time() < self._token_expires_at - 60:
             return
-
-        # Try loading cached token first
-        if self._load_cached_token():
+        if self.refresh_token and self._do_token_refresh():
             return
-
-        # Authenticate from scratch
         self.authenticate()
 
     def _make_request(
@@ -233,72 +217,42 @@ class SkylightClient:
         endpoint: str,
         data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """
-        Make authenticated request to Skylight API using discovered Basic Auth format
-
-        Args:
-            method: HTTP method (GET, POST, PATCH, DELETE, etc.)
-            endpoint: API endpoint (e.g., "/frames/calendar")
-            data: Optional data payload for POST/PATCH
-
-        Returns:
-            Parsed JSON response
-
-        Raises:
-            HTTPError: If request fails
-        """
+        """Make an authenticated request to the Skylight API."""
         self._ensure_authenticated()
 
         url = f"{self.BASE_URL}{endpoint}"
-
-        # Use discovered Basic Auth format: user_id:auth_token
-        auth_string = f"{self.user_id}:{self.auth_token}"
-        auth_header = base64.b64encode(auth_string.encode()).decode()
-
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "Authorization": f"Basic {auth_header}",
+            "Authorization": f"Bearer {self.access_token}",
             "User-Agent": "SkylightMobile (web)",
-            "Origin": "https://ourskylight.com",
         }
 
         try:
             response = self._session.request(method, url, json=data, headers=headers)
 
+            if response.status_code == 401:
+                logger.warning("Skylight 401 — attempting token refresh...")
+                if self._do_token_refresh():
+                    headers["Authorization"] = f"Bearer {self.access_token}"
+                    response = self._session.request(method, url, json=data, headers=headers)
+                else:
+                    # Refresh failed — do full login and retry once
+                    self.access_token = None
+                    self.refresh_token = None
+                    if self.token_cache_file.exists():
+                        self.token_cache_file.unlink()
+                    self._do_login()
+                    headers["Authorization"] = f"Bearer {self.access_token}"
+                    response = self._session.request(method, url, json=data, headers=headers)
+
             response.raise_for_status()
 
-            # Handle empty responses
             if not response.text.strip():
-                logger.debug("Empty response body")
                 return {}
-
             return response.json()
 
         except requests.exceptions.HTTPError as e:
-            # Handle token expiration (401 Unauthorized)
-            if e.response.status_code == 401:
-                logger.warning("Skylight token expired, re-authenticating...")
-                # Clear current auth data
-                self.user_id = None
-                self.auth_token = None
-                # Remove cached token
-                if self.token_cache_file.exists():
-                    self.token_cache_file.unlink()
-
-                # Re-authenticate and retry once
-                self.authenticate()
-
-                # Update auth header with new token
-                auth_string = f"{self.user_id}:{self.auth_token}"
-                auth_header = base64.b64encode(auth_string.encode()).decode()
-                headers["Authorization"] = f"Basic {auth_header}"
-
-                # Retry request
-                response = self._session.request(method, url, json=data, headers=headers)
-                response.raise_for_status()
-                return response.json()
-
             logger.error(f"HTTP error {e.response.status_code}: {e}")
             if hasattr(e.response, 'text'):
                 logger.error(f"Response: {e.response.text}")
@@ -554,12 +508,12 @@ class SkylightClient:
             endpoint = f"/frames/{self.frame_id}/lists/{list_id}/list_items/{skylight_id}"
             url = f"{self.BASE_URL}{endpoint}"
 
+            self._ensure_authenticated()
             headers = {
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "Authorization": f"Basic {base64.b64encode(f'{self.user_id}:{self.auth_token}'.encode()).decode()}",
+                "Authorization": f"Bearer {self.access_token}",
                 "User-Agent": "SkylightMobile (web)",
-                "Origin": "https://ourskylight.com",
             }
 
             response = self._session.put(url, headers=headers, json=body)
