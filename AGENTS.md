@@ -3,9 +3,13 @@
 ## Overview
 This document captures high-level implementation patterns, sync logic decisions, and architectural approaches for the grocery list sync automation.
 
-For detailed API reference (endpoints, request/response formats, error codes), refer to `./API_REFERENCE.md`.
+Canonical API source-of-truth repositories:
+- Paprika: https://github.com/aarons22/paprika-tools
+- Skylight: https://github.com/aarons22/skylight-tools
 
-**IMPORTANT** - If you learn about new API structures or examples, you should update the API_REFERENCE.md file accordingly.
+Use these external repos as authoritative for API behavior and schema (`openapi.yaml` + supporting docs). Treat local `./API_REFERENCE.md` as secondary project notes and snapshot commentary.
+
+**IMPORTANT** - Before implementing API-facing changes, refresh local snapshots from the source repos via `./scripts/pull_external_api_specs.sh`. If you discover API changes, update the external source repos first (or document an upstream issue/PR), then summarize local impact in `API_REFERENCE.md` with source commit SHAs.
 
 ---
 
@@ -195,8 +199,9 @@ CREATE TABLE items (
 ## Research Sources
 
 ### Paprika
-- **Primary Source:** [Paprika API Gist by Matt Steele](https://gist.github.com/mattdsteele/7386ec363badfdeaad05a418b9a1f30a)
-- **Kappari Library:** https://github.com/johnwbyrd/kappari (reference only - not used)
+- **Primary Source of Truth:** https://github.com/aarons22/paprika-tools
+- **Canonical Spec:** `openapi.yaml` in `paprika-tools`
+- **Historical Reference:** [Paprika API Gist by Matt Steele](https://gist.github.com/mattdsteele/7386ec363badfdeaad05a418b9a1f30a) (secondary only)
 - **Key Findings:**
   - V1 auth more stable than V2
   - Requires HTTP Basic Auth + form data
@@ -205,7 +210,9 @@ CREATE TABLE items (
   - Gzip compression required for POST
 
 ### Skylight
-- **Primary Research Method:** Browser DevTools network inspection
+- **Primary Source of Truth:** https://github.com/aarons22/skylight-tools
+- **Canonical Spec:** `openapi.yaml` in `skylight-tools`
+- **Secondary Research Method:** Browser DevTools network inspection
 - **Expected Format:** JSON:API specification
 - **Key Finding:** Individual deletion non-functional, bulk deletion works
 
@@ -276,7 +283,8 @@ When completing any development phase, always follow this cleanup protocol:
 
 2. **Update Documentation**:
    - Update PROJECT.md with phase status and progress
-   - Document any API discoveries in API_REFERENCE.md
+   - For API discoveries, update external source-of-truth repos first (or log upstream issue/PR)
+   - Summarize local implementation impact in API_REFERENCE.md with source commit SHAs
    - Update README.md if setup process changed
 
 3. **Verify Clean State**:
@@ -286,7 +294,7 @@ When completing any development phase, always follow this cleanup protocol:
 
 4. **File Organization**:
    - Keep only production-ready files and final working tests
-   - Move research notes to API_REFERENCE.md if valuable
+   - Move local research/snapshot notes to API_REFERENCE.md if valuable
    - Remove duplicate or obsolete implementations
 
 **Rationale**: Each phase generates many experimental files during development. Cleaning up prevents:
@@ -304,10 +312,10 @@ When completing any development phase, always follow this cleanup protocol:
 - Code examples for key algorithms
 
 API_REFERENCE.md should contain:
-- Detailed API endpoints and formats
-- Request/response examples
-- Error codes and troubleshooting
-- Technical limitations and behaviors
+- Local snapshot commentary from canonical external specs
+- Whisk-specific implementation notes and troubleshooting
+- Source commit SHAs used for API-sensitive behavior changes
+- Temporary research notes pending upstream documentation updates
 
 PROJECT.md should contain:
 - Overall project status and milestones

@@ -38,6 +38,7 @@ demo_state.db  # Demo database files
 # Logs
 *.log
 logs/
+.cache/external-api-specs/
 
 # IDE
 .vscode/
