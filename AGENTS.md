@@ -7,9 +7,9 @@ Canonical API source-of-truth repositories:
 - Paprika: https://github.com/aarons22/paprika-tools
 - Skylight: https://github.com/aarons22/skylight-tools
 
-Use these external repos as authoritative for API behavior and schema (`openapi.yaml` + supporting docs). Treat local `./API_REFERENCE.md` as secondary project notes and snapshot commentary.
+Use these external repos as authoritative for API behavior and schema (`openapi.yaml` + supporting docs).
 
-**IMPORTANT** - Before implementing API-facing changes, refresh local snapshots from the source repos via `./scripts/pull_external_api_specs.sh`. If you discover API changes, update the external source repos first (or document an upstream issue/PR), then summarize local impact in `API_REFERENCE.md` with source commit SHAs.
+**IMPORTANT** - Before implementing API-facing changes, refresh local snapshots from the source repos via `./scripts/pull_external_api_specs.sh`. If you discover API changes, update the external source repos first (or document an upstream issue/PR).
 
 ---
 
@@ -43,10 +43,10 @@ Use these external repos as authoritative for API behavior and schema (`openapi.
 - Soft deletion only - mark items as `purchased=True`
 
 **Skylight Integration:**
-- Multi-method authentication approach for robustness
+- OAuth2 Authorization Code flow (4-step: CSRF → form POST → `/oauth/authorize` → `/oauth/token`)
 - JSON:API format compliance required
-- Individual deletion broken - must use bulk destroy endpoint
-- Base64 token encoding: `base64(user_id:auth_token)`
+- Individual deletion broken - must use bulk destroy endpoint (`/list_items/bulk_destroy`)
+- Bearer token auth: `Authorization: Bearer <access_token>`
 
 **Sync Engine:**
 - Three-way state comparison (DB, Paprika, Skylight)
@@ -193,6 +193,22 @@ CREATE TABLE items (
 - Persists across restarts
 - Single file for easy backup
 - Built into Python standard library
+
+---
+
+## Known API Quirks
+
+### Paprika
+- **Gzip inconsistency**: Some responses are gzip-compressed, some are not. Check for magic bytes `\x1f\x8b` before decompressing rather than relying on `Content-Encoding` header.
+- **Bulk recipe create broken**: `POST /v2/sync/recipes/` (plural) returns 500. Use the individual recipe endpoint instead.
+- **Aisle auto-assignment**: Leave the `aisle` field empty when creating grocery items — Paprika assigns it automatically. Setting it explicitly breaks categorization.
+- **Rate limiting**: Wait 60+ seconds between bulk requests to avoid throttling (undocumented limit).
+- **V1 auth preference**: V1 is more stable than V2; V2 can return "Unrecognized client" errors.
+
+### Skylight
+- **Individual item delete broken**: `DELETE /list_items/{id}` is non-functional. Always use `DELETE /list_items/bulk_destroy` with `{"ids": [...]}`.
+- **Meal sitting response shape**: POST response for a new sitting may return `data` as an array (not object) and `instances: []`. A subsequent GET returns the correct shape with the date populated.
+- **Recipe-linked sittings**: If `meal_recipe_id` is set, `summary` must be `null`/blank — the API returns 422 otherwise.
 
 ---
 
