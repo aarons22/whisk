@@ -1,14 +1,19 @@
 """Skylight API client with OAuth2 Bearer token authentication"""
 
+import base64
+import hashlib
+import html
 import json
 import logging
 import os
 import re
+import secrets
+import sys
 import time
 import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Callable, List, Optional, Dict, Any
 
 import requests
 
@@ -17,8 +22,18 @@ from .models import ListItem
 logger = logging.getLogger(__name__)
 
 
+class SkylightAuthError(Exception):
+    """Raised when Skylight login fails (bad credentials, failed verification, etc.)."""
+
+
 class SkylightClient:
     """Client for interacting with Skylight API using OAuth2 Bearer tokens"""
+
+    MFA_MAX_ATTEMPTS = 3
+    INTERACTIVE_LOGIN_REQUIRED = (
+        "Skylight needs you to log in again with an emailed verification code. "
+        "Run 'whisk setup' (or any whisk command) in a terminal."
+    )
 
     BASE_URL = "https://app.ourskylight.com/api"
     AUTH_BASE = "https://app.ourskylight.com"
@@ -26,10 +41,21 @@ class SkylightClient:
     CLIENT_ID = "skylight-mobile"
     REDIRECT_URI = "https://ourskylight.com/welcome"
 
-    def __init__(self, email: str, password: str, frame_id: str, token_cache_file: str = "skylight_token"):
+    def __init__(
+        self,
+        email: str,
+        password: str,
+        frame_id: str,
+        token_cache_file: str = "skylight_token",
+        mfa_code_provider: Optional[Callable[[], str]] = None,
+    ):
         self.email = email
+        self.mfa_code_provider = mfa_code_provider
         self.password = password
         self.frame_id = frame_id
+        # Whether this account requires an emailed verification code to log in.
+        # Persisted in the token cache so unattended runs never start a login they can't finish.
+        self.mfa_required = False
         self.access_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
         self._token_expires_at: float = 0.0
@@ -50,6 +76,13 @@ class SkylightClient:
 
     def _do_login(self) -> None:
         """Full 4-step OAuth Authorization Code flow."""
+        if not self.mfa_required:
+            self.mfa_required = bool(self._read_cache().get("mfa_required", False))
+        if self.mfa_required and not self._can_enter_mfa_code():
+            # Don't contact Skylight at all: posting the password would email a code
+            # nobody can enter, and unattended retries would flood the inbox.
+            raise SkylightAuthError(self.INTERACTIVE_LOGIN_REQUIRED)
+
         login_session = requests.Session()
 
         # Step 1: fetch login page for CSRF token
@@ -77,17 +110,47 @@ class SkylightClient:
                 "User-Agent": "SkylightMobile (web)",
                 "Referer": f"{self.AUTH_BASE}/auth/session/new",
             },
+            allow_redirects=False,
             timeout=15,
         )
         if resp.status_code >= 400:
-            raise Exception(f"Skylight login failed ({resp.status_code}): check email and password")
+            raise SkylightAuthError(f"Skylight login failed ({resp.status_code}): check email and password")
+        location = resp.headers.get("Location", "")
+        if "/auth/session/new" in location:
+            # Bad credentials redirect back to the login form
+            raise SkylightAuthError("Skylight login failed: incorrect email or password")
+        if "/auth/mfa_challenge" in location:
+            if not self.mfa_required:
+                self.mfa_required = True
+                self._cache_token()  # remember 2FA so unattended runs stop before posting the password
+            if not self._can_enter_mfa_code():
+                # Stop before /auth/mfa_challenge/start, which sends the verification email
+                raise SkylightAuthError(self.INTERACTIVE_LOGIN_REQUIRED)
+            location = self._complete_mfa_challenge(login_session, location)
+        else:
+            self.mfa_required = False  # login completed without 2FA (e.g. user turned it off)
+        if location:
+            # Land on /auth/session/success, as a browser would, to finalize the session
+            login_session.get(
+                urllib.parse.urljoin(f"{self.AUTH_BASE}/", location),
+                headers={"User-Agent": "SkylightMobile (web)"},
+                timeout=15,
+            )
 
-        # Step 3: exchange session cookie for authorization code
+        # Step 3: exchange session cookie for authorization code (PKCE S256 is required)
+        code_verifier = secrets.token_urlsafe(64)
+        code_challenge = (
+            base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest()).rstrip(b"=").decode()
+        )
+        state = secrets.token_hex(16)
         authorize_url = f"{self.AUTH_BASE}/oauth/authorize?" + urllib.parse.urlencode({
             "client_id": self.CLIENT_ID,
             "redirect_uri": self.REDIRECT_URI,
             "response_type": "code",
             "scope": "everything",
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
         })
         resp = login_session.get(
             authorize_url,
@@ -96,23 +159,99 @@ class SkylightClient:
             timeout=15,
         )
         location = resp.headers.get("Location", "")
-        parsed = urllib.parse.urlparse(location)
-        code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(location).query)
+        code = query.get("code", [None])[0]
         if not code:
-            raise Exception(f"No authorization code in OAuth redirect: {location!r}")
+            detail = location or f"HTTP {resp.status_code}: {self._page_text(resp.text)}"
+            raise SkylightAuthError(f"Skylight did not issue an authorization code ({detail})")
+        if query.get("state", [None])[0] != state:
+            raise SkylightAuthError("Skylight OAuth state mismatch")
 
         # Step 4: exchange code for bearer + refresh tokens
-        self._exchange_code(code)
+        self._exchange_code(code, code_verifier)
         self._cache_token()
 
-    def _exchange_code(self, code: str) -> None:
-        """Exchange an authorization code for access + refresh tokens."""
+    @staticmethod
+    def _page_text(body: str, limit: int = 200) -> str:
+        """Collapse an HTML error page into a short plain-text snippet for error messages."""
+        body = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", body or "", flags=re.S | re.I)
+        text = html.unescape(re.sub(r"<[^>]+>", " ", body))
+        return re.sub(r"\s+", " ", text).strip()[:limit]
+
+    def _complete_mfa_challenge(self, login_session: requests.Session, location: str) -> str:
+        """Handle Skylight's emailed verification code (2FA) step after password login.
+
+        Returns the redirect location Skylight sends after the code is accepted.
+        """
+        # /auth/mfa_challenge/start sends the email and redirects to the code form
+        resp = login_session.get(
+            urllib.parse.urljoin(f"{self.AUTH_BASE}/", location),
+            headers={"User-Agent": "SkylightMobile (web)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        form_url = resp.url
+
+        for attempt in range(1, self.MFA_MAX_ATTEMPTS + 1):
+            match = re.search(r'name="authenticity_token" value="([^"]+)"', resp.text) or re.search(
+                r'<meta name="csrf-token" content="([^"]+)"', resp.text
+            )
+            if not match:
+                raise SkylightAuthError("Could not extract CSRF token from Skylight verification page")
+
+            code = self._get_mfa_code()
+            resp = login_session.post(
+                f"{self.AUTH_BASE}/auth/mfa_challenge",
+                data={"authenticity_token": match.group(1), "code": code},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": "SkylightMobile (web)",
+                    "Referer": form_url,
+                },
+                allow_redirects=False,
+                timeout=15,
+            )
+            next_location = resp.headers.get("Location", "")
+            rejected = resp.status_code >= 400 or "/auth/mfa_challenge" in next_location or (
+                resp.status_code == 200 and 'name="code"' in resp.text
+            )
+            if "/auth/session/new" in next_location:
+                raise SkylightAuthError("Skylight verification session expired; please log in again")
+            if not rejected:
+                logger.info("Skylight verification code accepted")
+                return next_location
+
+            logger.warning(f"Skylight verification code rejected (attempt {attempt}/{self.MFA_MAX_ATTEMPTS})")
+            if attempt < self.MFA_MAX_ATTEMPTS:
+                print("❌ That code wasn't accepted. Please try again.")
+                if resp.status_code != 200:
+                    resp = login_session.get(form_url, headers={"User-Agent": "SkylightMobile (web)"}, timeout=15)
+
+        raise SkylightAuthError("Skylight verification failed: too many incorrect codes")
+
+    def _get_mfa_code(self) -> str:
+        """Obtain the emailed verification code from the provider or an interactive prompt."""
+        if self.mfa_code_provider is not None:
+            code = self.mfa_code_provider()
+        elif self._can_enter_mfa_code():
+            print("📧 Skylight sent a verification code to your email.")
+            code = input("Enter Skylight verification code: ")
+        else:
+            raise SkylightAuthError(self.INTERACTIVE_LOGIN_REQUIRED)
+        code = (code or "").strip()
+        if not code:
+            raise SkylightAuthError("No Skylight verification code entered")
+        return code
+
+    def _exchange_code(self, code: str, code_verifier: str) -> None:
+        """Exchange an authorization code (with its PKCE verifier) for access + refresh tokens."""
         resp = requests.post(
             self.OAUTH_URL,
             data={
                 "grant_type": "authorization_code",
                 "client_id": self.CLIENT_ID,
                 "code": code,
+                "code_verifier": code_verifier,
                 "redirect_uri": self.REDIRECT_URI,
                 "scope": "everything",
             },
@@ -160,13 +299,14 @@ class SkylightClient:
             return False
 
     def _cache_token(self) -> None:
-        """Persist current tokens to cache file."""
+        """Persist current tokens (and whether the account uses 2FA) to the cache file."""
         try:
             token_data = {
                 "email": self.email,
                 "access_token": self.access_token,
                 "refresh_token": self.refresh_token,
                 "expires_at": self._token_expires_at,
+                "mfa_required": self.mfa_required,
             }
             with open(self.token_cache_file, "w") as f:
                 json.dump(token_data, f)
@@ -175,16 +315,30 @@ class SkylightClient:
         except Exception as e:
             logger.warning(f"Failed to cache Skylight token: {e}")
 
+    def _read_cache(self) -> Dict[str, Any]:
+        """Return the cache file contents for this account, or {} if missing/unreadable/other email."""
+        try:
+            with open(self.token_cache_file, "r") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(data, dict) or data.get("email") != self.email:
+            return {}
+        return data
+
+    def _can_enter_mfa_code(self) -> bool:
+        """True if a verification code can be obtained (callback or interactive terminal)."""
+        if self.mfa_code_provider is not None:
+            return True
+        return sys.stdin is not None and sys.stdin.isatty()
+
     def _load_cached_token(self) -> bool:
         """Load cached token. Refreshes automatically if expired. Returns True if usable."""
         try:
-            if not self.token_cache_file.exists():
+            data = self._read_cache()
+            if not data:
                 return False
-            with open(self.token_cache_file, "r") as f:
-                data = json.load(f)
-            if data.get("email") != self.email:
-                logger.debug("Cached Skylight token is for a different email")
-                return False
+            self.mfa_required = bool(data.get("mfa_required", False))
             access_token = data.get("access_token")
             refresh_token = data.get("refresh_token")
             expires_at = float(data.get("expires_at", 0))
@@ -240,8 +394,8 @@ class SkylightClient:
                     # Refresh failed — do full login and retry once
                     self.access_token = None
                     self.refresh_token = None
-                    if self.token_cache_file.exists():
-                        self.token_cache_file.unlink()
+                    self._token_expires_at = 0.0
+                    self._cache_token()  # drop stale tokens but keep the mfa_required flag
                     self._do_login()
                     headers["Authorization"] = f"Bearer {self.access_token}"
                     response = self._session.request(method, url, json=data, headers=headers)
