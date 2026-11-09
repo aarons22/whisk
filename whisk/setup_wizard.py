@@ -7,6 +7,7 @@ without requiring manual file editing.
 
 import getpass
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
@@ -29,6 +30,8 @@ class SetupWizard:
             config_dir: Directory for configuration files
         """
         self.config_manager = ConfigManager(config_dir)
+        # Token caches are written during setup, before the config file is saved
+        self.config_manager.config_dir.mkdir(parents=True, exist_ok=True)
         self.paprika_client: Optional[PaprikaClient] = None
         self.skylight_client: Optional[SkylightClient] = None
 
@@ -250,21 +253,24 @@ class SetupWizard:
     def _test_skylight_auth_and_discover_frames(self, email: str, password: str) -> Optional[List[Dict[str, Any]]]:
         """Test Skylight authentication and discover available frames"""
         try:
-            # Create a temporary client with a dummy frame ID for authentication testing
-            token_cache_file = self.config_manager.config_dir / "skylight_token_temp"
-            temp_client = SkylightClient(email, password, "temp", str(token_cache_file))
-            temp_client.authenticate()
-
-            # Now get frames using the authenticated client
-            frames = temp_client.get_frames()
-
-            # Clean up temp token file
-            if token_cache_file.exists():
-                token_cache_file.unlink()
-
-            return frames
+            # Log in fresh with the entered credentials into a temp cache file, so a failed
+            # or abandoned setup never destroys an existing working token.
+            temp_cache = self.config_manager.config_dir / "skylight_token_temp"
+            temp_cache.unlink(missing_ok=True)
+            temp_client = SkylightClient(email, password, "temp", str(temp_cache))
+            try:
+                temp_client.authenticate()
+                frames = temp_client.get_frames()
+                # Success: promote the token (tokens are per-account, not per-frame) so later
+                # steps reuse it instead of logging in again and emailing a second code.
+                if temp_cache.exists():
+                    os.replace(temp_cache, self.config_manager.config_dir / "skylight_token")
+                return frames
+            finally:
+                temp_cache.unlink(missing_ok=True)
         except Exception as e:
-            logger.debug(f"Skylight auth and frame discovery failed: {e}")
+            logger.debug(f"Skylight auth and frame discovery failed: {e}", exc_info=True)
+            print(f"   Error: {e}")
             return None
 
     def _discover_lists(self, paprika_creds: Dict[str, str], skylight_creds: Dict[str, str]) -> Tuple[List[str], List[str]]:
