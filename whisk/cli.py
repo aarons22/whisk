@@ -161,15 +161,18 @@ def cmd_start(args) -> int:
 
         config = config_manager.load_config()
 
-        # Validate that we have enabled pairs
+        # Need something to sync: list pairs and/or meal sync (same rule as `whisk sync`)
         enabled_pairs = [p for p in config.list_pairs if p.enabled]
-        if not enabled_pairs:
-            print("❌ No enabled list pairs found. Run 'whisk setup' to configure list pairs.")
+        if not enabled_pairs and not config.meal_sync_enabled:
+            print("❌ No enabled list pairs found and meal sync is disabled.")
+            print("   Run 'whisk setup' to configure list pairs or enable meal sync.")
             return 1
 
-        print(f"🚀 Starting Whisk daemon for {len(enabled_pairs)} list pair(s)...")
+        print("🚀 Starting Whisk daemon...")
         for pair in enabled_pairs:
             print(f"  • {pair.paprika_list} ↔ {pair.skylight_list}")
+        if config.meal_sync_enabled:
+            print(f"  • Meal plans: Paprika → Skylight ({config.meal_sync_days_ahead} days ahead)")
 
         daemon = DaemonManager(config, config_manager.config_dir)
         return daemon.start_daemon(foreground=args.foreground)
